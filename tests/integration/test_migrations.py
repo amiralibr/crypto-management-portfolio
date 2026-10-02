@@ -1,12 +1,12 @@
 """F1 Alembic migration integration tests (§13.4)."""
 
-from alembic.autogenerate import compare_metadata
-from alembic.config import Config
-from alembic.runtime.migration import MigrationContext
 from sqlalchemy import inspect, text
 from sqlalchemy.engine import Connection
 
 from alembic import command
+from alembic.autogenerate import compare_metadata
+from alembic.config import Config
+from alembic.runtime.migration import MigrationContext
 from app.db.models import Base
 from app.db.session import dispose_db, get_engine, init_db
 

@@ -11,6 +11,44 @@ jobs:
   security-scan:
     name: Secret, Live-Trading, and Paper Isolation Checks
     runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_DB: mvp0
+          POSTGRES_USER: mvp0
+          POSTGRES_PASSWORD: change_me_local_only
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U mvp0 -d mvp0"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      ENVIRONMENT: development
+      LOG_LEVEL: INFO
+      APP_NAME: mvp0
+      DATABASE_URL: postgresql+asyncpg://mvp0:change_me_local_only@127.0.0.1:5432/mvp0
+      REDIS_URL: redis://127.0.0.1:6379/0
+      MVP0_API_KEY: ci_operational_test_key_0000000001
+      MVP0_ADMIN_API_KEY: ci_admin_test_secret_key_00000002
+      UVICORN_WORKERS: "1"
+      SUPERVISOR_TASKS: "1"
+      LIVE_TRADING: "false"
+      PAPER_TRADING: "true"
+      PRICE_DRIFT_EXPIRY_THRESHOLD: "0.002"
+      OUTBOX_MAX_RETRIES: "5"
+      OUTBOX_RETRY_BASE_SECONDS: "2"
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -26,14 +64,6 @@ jobs:
           poetry install --no-interaction
 
       - name: Run security and Paper isolation test suite
-        env:
-          ENVIRONMENT: development
-          LOG_LEVEL: INFO
-          APP_NAME: mvp0
-          DATABASE_URL: postgresql+asyncpg://mvp0:change_me_local_only@localhost:5432/mvp0
-          REDIS_URL: redis://localhost:6379/0
-          MVP0_API_KEY: ci_operational_test_key_0000000001
-          MVP0_ADMIN_API_KEY: ci_admin_test_secret_key_00000002
         run: poetry run pytest tests/security -o addopts=""
 
       - name: Check for forbidden live-trading or real exchange patterns

@@ -30,17 +30,28 @@ jobs:
           USER_VAL=$(docker inspect mvp0-api:f1 --format '{{.Config.User}}')
           echo "Image User: $USER_VAL"
           test "$USER_VAL" = "10001"
+          docker run --rm mvp0-api:f1 python3 --version
+          docker run --rm mvp0-api:f1 uvicorn --version
+          docker run --rm mvp0-api:f1 alembic --version
 
       - name: Validate Development Docker Compose startup
         run: |
           docker compose up -d postgres redis api
+          READY=0
           for i in $(seq 1 30); do
             if curl -fsS http://127.0.0.1:8000/readyz; then
+              echo ""
               echo "Development API ready!"
+              READY=1
               break
             fi
             sleep 2
           done
+          if [ "$READY" -ne 1 ]; then
+            docker compose ps
+            docker compose logs
+            exit 1
+          fi
           curl -fsS http://127.0.0.1:8000/healthz
           curl -fsS http://127.0.0.1:8000/readyz
           curl -fsS http://127.0.0.1:8000/metrics | head -n 30
@@ -51,14 +62,21 @@ jobs:
       - name: Validate Paper Docker Compose startup and isolation
         run: |
           docker compose -f docker-compose.paper.yml up -d
+          HEALTHY=0
           for i in $(seq 1 30); do
             STATUS=$(docker inspect --format='{{.State.Health.Status}}' $(docker compose -f docker-compose.paper.yml ps -q paper_api))
             echo "Paper API health status: $STATUS"
             if [ "$STATUS" = "healthy" ]; then
+              HEALTHY=1
               break
             fi
             sleep 2
           done
+          if [ "$HEALTHY" -ne 1 ]; then
+            docker compose -f docker-compose.paper.yml ps
+            docker compose -f docker-compose.paper.yml logs
+            exit 1
+          fi
           docker compose -f docker-compose.paper.yml ps
           docker compose -f docker-compose.paper.yml logs paper_api
           docker network inspect mvp0_paper_network --format '{{.Internal}}' | grep -q "true"

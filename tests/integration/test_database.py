@@ -66,7 +66,7 @@ async def test_connection_pool_within_limits() -> None:
         max_overflow=10,
     )
     pool = engine.pool
-    assert isinstance(pool, (QueuePool, AsyncAdaptedQueuePool))
+    assert isinstance(pool, QueuePool | AsyncAdaptedQueuePool)
     assert pool.size() == 5
     await engine.dispose()
 

@@ -106,7 +106,7 @@ def _sanitize_value(key: str | None, value: object) -> object:
         return _scrub_string(value)
     if isinstance(value, dict):
         return {str(k): _sanitize_value(str(k), v) for k, v in value.items()}
-    if isinstance(value, (list, tuple)):
+    if isinstance(value, list | tuple):
         return [_sanitize_value(key, item) for item in value]
     return value
 

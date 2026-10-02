@@ -8,10 +8,10 @@ from collections.abc import AsyncGenerator, Generator
 from pathlib import Path
 
 import pytest
-from alembic.config import Config
 from httpx import ASGITransport, AsyncClient
 
 from alembic import command
+from alembic.config import Config
 
 TEST_OP_KEY: str = "test_operational_api_key_00000000001"
 TEST_ADMIN_KEY: str = "test_admin_secret_api_key_0000000002"

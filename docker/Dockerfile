@@ -5,10 +5,11 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     PIP_NO_CACHE_DIR=1 \
     POETRY_VERSION=2.5.1 \
+    POETRY_VIRTUALENVS_CREATE=true \
     POETRY_VIRTUALENVS_IN_PROJECT=true \
     POETRY_NO_INTERACTION=1
 
-WORKDIR /build
+WORKDIR /app
 
 RUN pip install --no-cache-dir "poetry==${POETRY_VERSION}"
 
@@ -30,7 +31,7 @@ RUN groupadd --gid 10001 appuser && \
 
 WORKDIR /app
 
-COPY --from=builder --chown=10001:10001 /build/.venv /app/.venv
+COPY --from=builder --chown=10001:10001 /app/.venv /app/.venv
 COPY --chown=10001:10001 alembic.ini ./alembic.ini
 COPY --chown=10001:10001 alembic ./alembic
 COPY --chown=10001:10001 app ./app
