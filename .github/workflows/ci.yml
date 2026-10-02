@@ -1,0 +1,95 @@
+name: CI
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+    branches: ["**"]
+  workflow_dispatch:
+
+jobs:
+  ci:
+    name: Lint, Typecheck, Migrate, and Test (Python 3.12)
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_DB: mvp0
+          POSTGRES_USER: mvp0
+          POSTGRES_PASSWORD: change_me_local_only
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U mvp0 -d mvp0"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      ENVIRONMENT: development
+      LOG_LEVEL: INFO
+      APP_NAME: mvp0
+      DATABASE_URL: postgresql+asyncpg://mvp0:change_me_local_only@localhost:5432/mvp0
+      REDIS_URL: redis://localhost:6379/0
+      MVP0_API_KEY: ci_operational_test_key_0000000001
+      MVP0_ADMIN_API_KEY: ci_admin_test_secret_key_00000002
+      UVICORN_WORKERS: "1"
+      SUPERVISOR_TASKS: "1"
+      LIVE_TRADING: "false"
+      PAPER_TRADING: "true"
+      PRICE_DRIFT_EXPIRY_THRESHOLD: "0.002"
+      OUTBOX_MAX_RETRIES: "5"
+      OUTBOX_RETRY_BASE_SECONDS: "2"
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install Poetry
+        run: pip install "poetry==2.5.1"
+
+      - name: Install dependencies from poetry.lock
+        run: poetry install --no-interaction
+
+      - name: Run ruff check
+        run: poetry run ruff check app tests scripts alembic
+
+      - name: Run ruff format --check
+        run: poetry run ruff format --check app tests scripts alembic
+
+      - name: Run mypy --strict app
+        run: poetry run mypy --strict app
+
+      - name: Run alembic upgrade head
+        run: poetry run alembic upgrade head
+
+      - name: Run alembic downgrade base
+        run: poetry run alembic downgrade base
+
+      - name: Run alembic upgrade head again
+        run: poetry run alembic upgrade head
+
+      - name: Run pytest with coverage gates
+        run: |
+          poetry run pytest --cov=app --cov-branch --cov-report=term-missing --cov-report=xml:coverage.xml --cov-fail-under=80
+          poetry run coverage report --include="app/core/*" --fail-under=90
+          poetry run coverage report --include="app/db/*" --fail-under=90
+
+      - name: Upload coverage report
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-report
+          path: coverage.xml

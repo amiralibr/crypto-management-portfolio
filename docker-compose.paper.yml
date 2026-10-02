@@ -1,0 +1,92 @@
+services:
+  paper_postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: mvp0_paper
+      POSTGRES_USER: mvp0paper
+      POSTGRES_PASSWORD: ${PAPER_POSTGRES_PASSWORD:-paper_local_only_pw}
+    volumes:
+      - paper_postgres_data:/var/lib/postgresql/data
+    networks:
+      - paper_network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U mvp0paper -d mvp0_paper"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  paper_redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    command: ["redis-server", "--requirepass", "${PAPER_REDIS_PASSWORD:-paper_local_only_pw}"]
+    volumes:
+      - paper_redis_data:/data
+    networks:
+      - paper_network
+    healthcheck:
+      test: ["CMD-SHELL", "redis-cli -a $${PAPER_REDIS_PASSWORD:-paper_local_only_pw} ping | grep PONG"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  paper_api:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.paper
+    restart: unless-stopped
+    depends_on:
+      paper_postgres:
+        condition: service_healthy
+      paper_redis:
+        condition: service_healthy
+    environment:
+      ENVIRONMENT: paper
+      LOG_LEVEL: INFO
+      APP_NAME: mvp0-paper
+      POSTGRES_HOST: paper_postgres
+      POSTGRES_PORT: 5432
+      POSTGRES_DB: mvp0_paper
+      POSTGRES_USER: mvp0paper
+      POSTGRES_PASSWORD: ${PAPER_POSTGRES_PASSWORD:-paper_local_only_pw}
+      DATABASE_URL: postgresql+asyncpg://mvp0paper:${PAPER_POSTGRES_PASSWORD:-paper_local_only_pw}@paper_postgres:5432/mvp0_paper
+      REDIS_HOST: paper_redis
+      REDIS_PORT: 6379
+      REDIS_PASSWORD: ${PAPER_REDIS_PASSWORD:-paper_local_only_pw}
+      REDIS_URL: redis://:${PAPER_REDIS_PASSWORD:-paper_local_only_pw}@paper_redis:6379/0
+      MVP0_API_KEY: ${PAPER_MVP0_API_KEY:-paper_operational_placeholder_key_0001}
+      MVP0_ADMIN_API_KEY: ${PAPER_MVP0_ADMIN_API_KEY:-paper_admin_placeholder_key_00000002}
+      UVICORN_WORKERS: 1
+      SUPERVISOR_TASKS: 1
+      APPROVAL_TIMEOUT_INTERVAL_SECONDS: 5
+      LIVE_TRADING: "false"
+      PAPER_TRADING: "true"
+      PRICE_DRIFT_EXPIRY_THRESHOLD: "0.002"
+      OUTBOX_MAX_RETRIES: 5
+      OUTBOX_RETRY_BASE_SECONDS: 2
+    command: >
+      sh -c "./scripts/wait-for-postgres.sh &&
+      alembic upgrade head &&
+      uvicorn app.main:app --host 0.0.0.0 --port 8000 --workers 1"
+    networks:
+      - paper_network
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "python3",
+          "-c",
+          "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/readyz', timeout=3)",
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+
+volumes:
+  paper_postgres_data:
+  paper_redis_data:
+
+networks:
+  paper_network:
+    name: mvp0_paper_network
+    internal: true

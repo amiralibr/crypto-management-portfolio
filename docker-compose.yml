@@ -1,0 +1,135 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-mvp0}
+      POSTGRES_USER: ${POSTGRES_USER:-mvp0}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-change_me_local_only}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    networks:
+      - mvp0_network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER:-mvp0} -d $${POSTGRES_DB:-mvp0}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    command: ["redis-server", "--requirepass", "${REDIS_PASSWORD:-change_me_local_only}"]
+    volumes:
+      - redis_data:/data
+    networks:
+      - mvp0_network
+    healthcheck:
+      test: ["CMD-SHELL", "redis-cli -a $${REDIS_PASSWORD:-change_me_local_only} ping | grep PONG"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  api:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    environment:
+      ENVIRONMENT: ${ENVIRONMENT:-development}
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      APP_NAME: ${APP_NAME:-mvp0}
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: 5432
+      POSTGRES_DB: ${POSTGRES_DB:-mvp0}
+      POSTGRES_USER: ${POSTGRES_USER:-mvp0}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-change_me_local_only}
+      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-mvp0}:${POSTGRES_PASSWORD:-change_me_local_only}@postgres:5432/${POSTGRES_DB:-mvp0}
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      REDIS_PASSWORD: ${REDIS_PASSWORD:-change_me_local_only}
+      REDIS_URL: redis://:${REDIS_PASSWORD:-change_me_local_only}@redis:6379/0
+      MVP0_API_KEY: ${MVP0_API_KEY:-dev_operational_key_0000000000000001}
+      MVP0_ADMIN_API_KEY: ${MVP0_ADMIN_API_KEY:-dev_admin_secret_key_0000000000000002}
+      UVICORN_WORKERS: 1
+      SUPERVISOR_TASKS: 1
+      APPROVAL_TIMEOUT_INTERVAL_SECONDS: 5
+      LIVE_TRADING: "false"
+      PAPER_TRADING: "true"
+      PRICE_DRIFT_EXPIRY_THRESHOLD: "0.002"
+      OUTBOX_MAX_RETRIES: 5
+      OUTBOX_RETRY_BASE_SECONDS: 2
+    command: >
+      sh -c "./scripts/wait-for-postgres.sh &&
+      alembic upgrade head &&
+      uvicorn app.main:app --host 0.0.0.0 --port 8000 --workers 1"
+    ports:
+      - "8000:8000"
+    networks:
+      - mvp0_network
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "python3",
+          "-c",
+          "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/readyz', timeout=3)",
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+
+  prometheus:
+    image: prom/prometheus:v2.54.1
+    restart: unless-stopped
+    depends_on:
+      api:
+        condition: service_healthy
+    volumes:
+      - ./docker/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus_data:/prometheus
+    ports:
+      - "9090:9090"
+    networks:
+      - mvp0_network
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:9090/-/healthy"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  grafana:
+    image: grafana/grafana:11.2.0
+    restart: unless-stopped
+    depends_on:
+      prometheus:
+        condition: service_healthy
+    environment:
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_PASSWORD:-change_me_local_only}
+    volumes:
+      - grafana_data:/var/lib/grafana
+    ports:
+      - "3000:3000"
+    networks:
+      - mvp0_network
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:3000/api/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  postgres_data:
+  redis_data:
+  prometheus_data:
+  grafana_data:
+
+networks:
+  mvp0_network:
+    name: mvp0_network
+    driver: bridge
