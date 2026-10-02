@@ -87,6 +87,12 @@ jobs:
           poetry run pytest --cov=app --cov-branch --cov-report=term-missing --cov-report=xml:coverage.xml --cov-fail-under=80
           poetry run coverage report --include="app/core/*" --fail-under=90
           poetry run coverage report --include="app/db/*" --fail-under=90
+          poetry run coverage report --include="app/services/risk_engine.py" --fail-under=90
+          poetry run coverage report --include="app/services/state_machine.py" --fail-under=90
+          poetry run coverage report --include="app/services/kill_switch.py" --fail-under=90
+          poetry run coverage report --include="app/core/security.py" --fail-under=90
+          poetry run coverage report --include="app/services/synthetic_stop.py" --fail-under=90
+          poetry run coverage report --include="app/services/outbox.py" --fail-under=90
 
       - name: Upload coverage report
         uses: actions/upload-artifact@v4

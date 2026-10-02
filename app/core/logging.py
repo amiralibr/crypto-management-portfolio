@@ -82,6 +82,21 @@ def clear_request_context() -> None:
     structlog.contextvars.clear_contextvars()
 
 
+def get_request_id_ctx() -> str:
+    """Return current request_id from contextvars."""
+    return request_id_ctx_var.get()
+
+
+def get_correlation_id_ctx() -> str:
+    """Return current correlation_id from contextvars."""
+    return correlation_id_ctx_var.get()
+
+
+def redact_sensitive_value(value: object) -> object:
+    """Recursively redact sensitive keys and secret patterns from a value."""
+    return _sanitize_value(None, value)
+
+
 def _scrub_string(value: str) -> str:
     """Scrub Bearer tokens, connection strings, and registered secrets from a string."""
     scrubbed = _BEARER_REGEX.sub("Bearer [REDACTED]", value)

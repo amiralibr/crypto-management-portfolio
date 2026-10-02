@@ -73,6 +73,107 @@ class InvalidRequestError(AppError):
         )
 
 
+class NotFoundError(AppError):
+    """Raised when a requested domain entity does not exist (HTTP 404)."""
+
+    def __init__(
+        self,
+        message: str = "Resource not found",
+        details: dict[str, Any] | None = None,
+    ) -> None:
+        super().__init__(
+            code="NOT_FOUND",
+            message=message,
+            status_code=404,
+            details=details,
+        )
+
+
+class InvalidStateError(AppError):
+    """Raised when a state machine or approval transition is invalid (HTTP 409)."""
+
+    def __init__(
+        self,
+        message: str = "Invalid transition",
+        details: dict[str, Any] | None = None,
+    ) -> None:
+        super().__init__(
+            code="INVALID_STATE",
+            message=message,
+            status_code=409,
+            details=details,
+        )
+
+
+class ConflictError(AppError):
+    """Raised on concurrency or business state conflicts (HTTP 409)."""
+
+    def __init__(
+        self,
+        message: str = "State conflict",
+        code: str = "CONFLICT",
+        details: dict[str, Any] | None = None,
+    ) -> None:
+        super().__init__(
+            code=code,
+            message=message,
+            status_code=409,
+            details=details,
+        )
+
+
+class KillSwitchConflictError(AppError):
+    """Raised when Kill Switch state or resume action conflicts (HTTP 409)."""
+
+    def __init__(
+        self,
+        message: str = "Kill Switch conflict",
+        details: dict[str, Any] | None = None,
+    ) -> None:
+        super().__init__(
+            code="KILL_SWITCH_CONFLICT",
+            message=message,
+            status_code=409,
+            details=details,
+        )
+
+
+class KillSwitchActiveError(AppError):
+    """Raised when new order or signal execution is blocked by Kill Switch (HTTP 409)."""
+
+    def __init__(
+        self,
+        message: str = "Kill Switch is active; new orders are blocked",
+        details: dict[str, Any] | None = None,
+    ) -> None:
+        super().__init__(
+            code="KILL_SWITCH_ACTIVE",
+            message=message,
+            status_code=409,
+            details=details,
+        )
+
+
+class RiskRejectedError(AppError):
+    """Raised when the Risk Engine rejects a signal or order (HTTP 422)."""
+
+    def __init__(
+        self,
+        message: str = "Order rejected by Risk Engine",
+        reason_codes: list[str] | None = None,
+        details: dict[str, Any] | None = None,
+    ) -> None:
+        merged_details = dict(details or {})
+        if reason_codes is not None:
+            merged_details["reason_codes"] = reason_codes
+        super().__init__(
+            code="RISK_REJECTED",
+            message=message,
+            status_code=422,
+            details=merged_details,
+        )
+
+
 class ServiceUnavailableError(AppError):
     """Raised when a critical backing dependency is unavailable (HTTP 503)."""
 

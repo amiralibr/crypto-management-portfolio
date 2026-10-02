@@ -2,6 +2,9 @@
 
 from enum import StrEnum
 
+ALLOWED_SYMBOLS: frozenset[str] = frozenset({"BTC/USDT", "ETH/USDT", "BNB/USDT"})
+ALLOWED_TIMEFRAMES: frozenset[str] = frozenset({"1H", "4H", "1D"})
+
 
 class Environment(StrEnum):
     """Supported application runtime environments."""
@@ -76,6 +79,21 @@ class SyntheticStopStatus(StrEnum):
     CANCELLED = "CANCELLED"
 
 
+class PositionStatus(StrEnum):
+    """Spot position lifecycle states."""
+
+    OPEN = "OPEN"
+    CLOSED = "CLOSED"
+    MANUAL_REVIEW = "MANUAL_REVIEW"
+
+
+class RiskDecisionStatus(StrEnum):
+    """Risk Engine decision outcomes."""
+
+    APPROVE = "APPROVE"
+    REJECT = "REJECT"
+
+
 class OutboxStatus(StrEnum):
     """Transactional outbox event states."""
 
@@ -84,6 +102,27 @@ class OutboxStatus(StrEnum):
     PUBLISHED = "PUBLISHED"
     FAILED = "FAILED"
     DEAD_LETTER = "DEAD_LETTER"
+
+
+class OutboxEventType(StrEnum):
+    """Supported transactional outbox event types (§19.1)."""
+
+    SIGNAL_CREATED = "SIGNAL_CREATED"
+    SIGNAL_APPROVED = "SIGNAL_APPROVED"
+    SIGNAL_REJECTED = "SIGNAL_REJECTED"
+    SIGNAL_EXPIRED = "SIGNAL_EXPIRED"
+    SIGNAL_PRICE_DRIFT_EXPIRED = "SIGNAL_PRICE_DRIFT_EXPIRED"
+    ORDER_CREATED = "ORDER_CREATED"
+    ORDER_SUBMITTED = "ORDER_SUBMITTED"
+    ORDER_FILLED = "ORDER_FILLED"
+    POSITION_CREATED = "POSITION_CREATED"
+    STOP_REGISTERED = "STOP_REGISTERED"
+    STOP_TRIGGERED = "STOP_TRIGGERED"
+    STOP_EXECUTED = "STOP_EXECUTED"
+    POSITION_CLOSED = "POSITION_CLOSED"
+    RECONCILIATION_FAILED = "RECONCILIATION_FAILED"
+    KILL_SWITCH_ACTIVATED = "KILL_SWITCH_ACTIVATED"
+    KILL_SWITCH_RESUMED = "KILL_SWITCH_RESUMED"
 
 
 class DeadLetterFailureClass(StrEnum):

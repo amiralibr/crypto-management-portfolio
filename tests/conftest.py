@@ -195,6 +195,18 @@ def migrated_db(alembic_config: Config) -> None:
 
 
 @pytest.fixture
+def operational_headers() -> dict[str, str]:
+    """Return Authorization Bearer header for OPERATIONAL role."""
+    return {"Authorization": f"Bearer {TEST_OP_KEY}"}
+
+
+@pytest.fixture
+def admin_headers() -> dict[str, str]:
+    """Return Authorization Bearer header for ADMIN role."""
+    return {"Authorization": f"Bearer {TEST_ADMIN_KEY}"}
+
+
+@pytest.fixture
 async def async_client(migrated_db: None) -> AsyncGenerator[AsyncClient, None]:
     """Provide an httpx AsyncClient bound to a fresh FastAPI application."""
     from app.db.session import dispose_db, init_db
