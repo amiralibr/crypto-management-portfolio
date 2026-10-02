@@ -1,11 +1,15 @@
 """Development database seed script for MVP-0 F1 Foundation (Paper-only)."""
 
 import asyncio
+import sys
+from pathlib import Path
 
 from sqlalchemy import select
 
-from app.db.models import ExchangeAccount, Strategy, SystemState
-from app.db.session import dispose_db, get_session_factory, init_db
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+
+from app.db.models import ExchangeAccount, Strategy, SystemState  # noqa: E402
+from app.db.session import dispose_db, get_session_factory, init_db  # noqa: E402
 
 
 async def seed_foundation_data() -> None:
