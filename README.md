@@ -1,33 +1,36 @@
-# MVP-0 Crypto Risk Management System — Phase F1 & F2
+# MVP-0 Crypto Risk Management System — Phase F1 Foundation
 
-**Current Phase:** `F2 — Data and Risk Core`  
-**Phase Status:** `F1 COMPLETED / F2 READY FOR REVIEW`  
+**Current Official Phase:** `F1 — Foundation`  
+**Phase Status:** `F1 READY FOR REVIEW`  
+**F1 Candidate Tag:** `release/f1-candidate` (Commit `bdff565d1b46222bd15340a0fe0ba3e76dd7411b`)  
+**F2 Candidate Status:** `FROZEN AS F2 CANDIDATE` (`release/f2-candidate` — Commit `a15f3dc4e986f21bdfbcb1da812599a550d8eb7b`, awaiting formal F1 Auditor approval)  
+**F3 Status:** `FROZEN / NOT STARTED`  
 **Trading Mode:** `PAPER ONLY` (`LIVE_TRADING=false`, `PAPER_TRADING=true` — immutable)  
-**Governing Contracts:**
-1. `MVP0_Implementation_Contract_v1.2_FINAL.md`
-2. `MVP0_F1_Foundation_Implementation_Package_v1.0.md`
-3. `MVP-0_Complete_Engineering_Master_Package_v4_3_Final_G0_Implementation_Ready.md`
+**Completion Evidence Document:** [`MVP0_F1_Completion_Evidence_v1.0.md`](./MVP0_F1_Completion_Evidence_v1.0.md)
 
 ---
 
-## 1. Overview & Hard Constraints
+## 1. Phase Governance & Freeze Notice
+
+- **Phase F1 (`release/f1-candidate`)** is complete and submitted for formal Auditor review (`F1 READY FOR REVIEW`). Full evidence is documented in [`MVP0_F1_Completion_Evidence_v1.0.md`](./MVP0_F1_Completion_Evidence_v1.0.md).
+- **Phase F2 (`release/f2-candidate`) and Phase F3** are **strictly frozen**. Early F2 changes (`bdff565..a15f3dc`) are retained solely as an unapproved `F2 Candidate` (`release/f2-candidate`) and will not be advanced until written Auditor sign-off of Phase F1.
+
+---
+
+## 2. F1 Overview & Hard Constraints
+
+F1 Foundation implements the minimum safe, observable, testable foundation for MVP-0:
 
 - **Runtime:** Python 3.12, FastAPI, Uvicorn locked to `--workers 1`
 - **Durable Store:** PostgreSQL 16 via SQLAlchemy 2 AsyncEngine + Alembic (`M001`–`M006`)
 - **Transient Store:** Redis 7 (`RedisClient` restricted to cache/locks; never durable state)
 - **Authentication:** Static Bearer API Keys (`MVP0_API_KEY` for `OPERATIONAL`, `MVP0_ADMIN_API_KEY` for `ADMIN`) using constant-time `secrets.compare_digest`
-- **Risk & Safety Core (F2):**
-  - `RiskEngine`: Fail-closed risk evaluation, `Decimal`-only position sizing, `floor_to_step`, and immutable `InvestmentPolicySnapshot`
-  - `StateMachineService`: Signal & Order state machines, 60s partial-fill timeout, and 0s/5s/15s protection retry schedule
-  - `ApprovalTimeoutService`: Dynamic timeframes (`15M`=3m, `1H`=10m, `4H`=30m, `1D`=120m), IPS downward cap, and `0.2%` price drift expiry
-  - `SyntheticStopService`: PostgreSQL-backed recovery, timeframe-adaptive polling, single-trigger CAS, and 0s/5s/15s market-close retry schedule
-  - `KillSwitchService`: Ordered 7-step fail-safe activation, idempotent handling, and Two-Person Approval (`ADMIN` + `OPERATIONAL`) with 30% reduced exposure on resume
-  - `OutboxService`: Transactional Outbox with `SELECT ... FOR UPDATE SKIP LOCKED`, exponential backoff (`2s, 4s, 8s, 16s, 32s`), Dead-Letter Queue (`dead_letter_events`), and tiered alerting
-  - `WorkerSupervisor`: Single-instance background workers (`approval_timeout`, `synthetic_stop`, `outbox_publisher`, `watchdog`)
+- **Observability:** `structlog` JSON output with mandatory fields and secret redaction, plus Prometheus `/metrics`
+- **Paper Isolation:** Dedicated `docker-compose.paper.yml` using `mvp0_paper_network` (`internal: true`), separate PostgreSQL/Redis instances, and no host-exposed database/cache ports
 
 ---
 
-## 2. Quickstart & Commands
+## 3. Quickstart & Commands
 
 ### Install Dependencies
 ```bash
@@ -53,17 +56,25 @@ poetry run alembic upgrade head
 poetry run pytest
 poetry run coverage report --include="app/core/*" --fail-under=90
 poetry run coverage report --include="app/db/*" --fail-under=90
-poetry run coverage report --include="app/services/risk_engine.py" --fail-under=90
-poetry run coverage report --include="app/services/state_machine.py" --fail-under=90
-poetry run coverage report --include="app/services/kill_switch.py" --fail-under=90
-poetry run coverage report --include="app/core/security.py" --fail-under=90
-poetry run coverage report --include="app/services/synthetic_stop.py" --fail-under=90
-poetry run coverage report --include="app/services/outbox.py" --fail-under=90
+```
+
+### Docker Compose (Development)
+```bash
+docker compose up --build -d
+docker compose ps
+docker compose down -v
+```
+
+### Docker Compose (Isolated Paper Environment)
+```bash
+docker compose -f docker-compose.paper.yml up --build -d
+docker compose -f docker-compose.paper.yml ps
+docker compose -f docker-compose.paper.yml down -v
 ```
 
 ---
 
-## 3. Endpoints Implemented (F1 + F2)
+## 4. F1 Endpoints (`release/f1-candidate`)
 
 | Method | Path | Auth | Description |
 |---|---|---|---|
@@ -72,11 +83,3 @@ poetry run coverage report --include="app/services/outbox.py" --fail-under=90
 | `GET` | `/metrics` | Public/Internal | Prometheus metrics endpoint |
 | `GET` | `/api/v1/system/health` | `OPERATIONAL` or `ADMIN` | Detailed authenticated health status |
 | `GET` | `/api/v1/system/status` | `ADMIN` | Administrative foundation configuration status |
-| `GET` | `/api/v1/risk/status` | `OPERATIONAL` or `ADMIN` | Current risk status, Kill Switch state, and exposure multiplier |
-| `POST` | `/api/v1/system/emergency-stop` | `ADMIN` | Activate Emergency Stop / Kill Switch |
-| `GET` | `/api/v1/system/emergency-stop` | `OPERATIONAL` or `ADMIN` | Inspect Emergency Stop / Kill Switch state |
-| `POST` | `/api/v1/system/emergency-stop/resume-requests` | `ADMIN` | Create Kill Switch resume request (Two-Person Approval) |
-| `GET` | `/api/v1/system/emergency-stop/resume-requests` | `OPERATIONAL` or `ADMIN` | List Kill Switch resume requests |
-| `GET` | `/api/v1/system/emergency-stop/resume-requests/{id}` | `OPERATIONAL` or `ADMIN` | Inspect specific resume request |
-| `POST` | `/api/v1/system/emergency-stop/resume-requests/{id}/approve` | `OPERATIONAL` or `ADMIN` | Approve resume request (`ADMIN` + `OPERATIONAL`, distinct actors) |
-| `POST` | `/api/v1/system/emergency-stop/resume-requests/{id}/reject` | `OPERATIONAL` or `ADMIN` | Reject active resume request |
