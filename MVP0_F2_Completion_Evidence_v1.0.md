@@ -64,3 +64,28 @@
 3. `test_chaos_kill_switch_service_restart_preserves_state`: Restarting the independent Kill Switch Service preserves `is_active=True` and the 24-hour (`86400s`) pending resume request in PostgreSQL.
 4. `test_chaos_database_disconnection_fails_closed`: Database outage causes `/readyz` on the Kill Switch Service to return `503 Service Unavailable` (`not_ready`).
 5. `test_chaos_redis_restart_preserves_durable_domain_state`: Redis outage and restart loses zero PostgreSQL domain state and enforces all `FORBIDDEN_DURABLE_PREFIXES` in central config.
+
+---
+
+## 3. CI/CD, Static Analysis & Test Coverage Evidence
+
+- **Remediated F2 Code Commit:** `676a0ed47c6259074483272cd06ec132e7b10334`
+- **GitHub Actions Workflows on `676a0ed47c6259074483272cd06ec132e7b10334` (All Green):**
+  - `CI` (Run ID `37142099958`, Python 3.12 + PostgreSQL 16 + Redis 7): `completed / success`
+  - `Security & Paper Isolation Scan` (Run ID `37142099978`): `completed / success`
+  - `Docker Build & Compose Validation` (Run ID `37142099977`, including `Dockerfile.kill-switch`, `kill_switch`, and `paper_kill_switch`): `completed / success`
+- **Static Analysis Gates:**
+  - `ruff check .`: `All checks passed!` (`0` errors across `97` files)
+  - `ruff format --check .`: `97 files already formatted` (`0` issues)
+  - `mypy --strict app`: `Success: no issues found in 65 source files` (`0` errors)
+- **Test & Coverage Summary (`107 passed`):**
+  - Total `app/` coverage: `92.68%` (required `>= 80%`)
+  - `app/core/*`: `95%` (required `>= 90%`)
+  - `app/db/*`: `99%` (required `>= 90%`)
+  - `app/services/risk_engine.py`: `97%` (required `>= 90%`)
+  - `app/services/state_machine.py`: `93%` (required `>= 90%`)
+  - `app/services/kill_switch.py`: `92%` (required `>= 90%`)
+  - `app/core/security.py`: `100%` (required `>= 90%`)
+  - `app/services/synthetic_stop.py`: `94%` (required `>= 90%`)
+  - `app/services/outbox.py`: `96%` (required `>= 90%`)
+
