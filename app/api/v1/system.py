@@ -18,6 +18,8 @@ from app.db.models.system_state import SystemState
 from app.db.session import check_migrations_current, ping_database
 from app.schemas.system import (
     AdminSystemStatusResponse,
+    DeadLetterReplayRequest,
+    DeadLetterReplayResponse,
     EmergencyStopActivateRequest,
     EmergencyStopActivateResponse,
     EmergencyStopStateResponse,
@@ -27,6 +29,7 @@ from app.schemas.system import (
     SystemHealthResponse,
 )
 from app.services.kill_switch import KillSwitchService
+from app.services.outbox import OutboxService
 
 router = APIRouter(prefix="/system", tags=["system"])
 
@@ -276,3 +279,34 @@ async def get_kill_switch_resume_request(
     req = await service.get_resume_request(session, request_id=request_id)
     state = await service.get_or_create_state(session, for_update=False)
     return _build_resume_response(req, state, get_request_id(request))
+
+
+@router.post(
+    "/dead-letters/{dead_letter_id}/replay",
+    response_model=DeadLetterReplayResponse,
+)
+async def replay_dead_letter_event(
+    request: Request,
+    dead_letter_id: uuid.UUID,
+    payload: DeadLetterReplayRequest,
+    role: Annotated[ApiRole, Depends(require_admin_role)],
+    session: Annotated[AsyncSession, Depends(get_db_session)],
+) -> DeadLetterReplayResponse:
+    """Replay a Dead-Letter event (ADMIN only) (§19.4 & F2 Requirement #6)."""
+    outbox_service = OutboxService()
+    actor_id = _resolve_actor_id(request, role, payload.actor_id)
+    dlq, new_outbox_event = await outbox_service.replay_dead_letter(
+        session,
+        dead_letter_id=dead_letter_id,
+        actor_id=actor_id,
+        actor_role=role,
+        resolution_note=payload.resolution_note,
+    )
+    await session.commit()
+    return DeadLetterReplayResponse(
+        dead_letter_id=str(dlq.id),
+        resolution_status=dlq.resolution_status,
+        replayed_outbox_event_id=str(new_outbox_event.id),
+        replayed_outbox_status=new_outbox_event.status,
+        request_id=get_request_id(request),
+    )

@@ -16,32 +16,37 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Build API Docker image
-        run: docker build -f docker/Dockerfile -t mvp0-api:f1 .
+        run: docker build -f docker/Dockerfile -t mvp0-api:f2 .
 
       - name: Build Paper API Docker image
-        run: docker build -f docker/Dockerfile.paper -t mvp0-paper-api:f1 .
+        run: docker build -f docker/Dockerfile.paper -t mvp0-paper-api:f2 .
+
+      - name: Build Independent Kill Switch Docker image
+        run: docker build -f docker/Dockerfile.kill-switch -t mvp0-kill-switch:f2 .
 
       - name: Verify runtime command uses exactly one worker and non-root UID 10001
         run: |
-          CMD_JSON=$(docker inspect mvp0-api:f1 --format '{{json .Config.Cmd}}')
-          echo "Image CMD: $CMD_JSON"
-          echo "$CMD_JSON" | grep -q '"--workers"'
-          echo "$CMD_JSON" | grep -q '"1"'
-          USER_VAL=$(docker inspect mvp0-api:f1 --format '{{.Config.User}}')
-          echo "Image User: $USER_VAL"
-          test "$USER_VAL" = "10001"
-          docker run --rm mvp0-api:f1 python3 --version
-          docker run --rm mvp0-api:f1 uvicorn --version
-          docker run --rm mvp0-api:f1 alembic --version
+          for IMG in mvp0-api:f2 mvp0-kill-switch:f2; do
+            CMD_JSON=$(docker inspect "$IMG" --format '{{json .Config.Cmd}}')
+            echo "$IMG CMD: $CMD_JSON"
+            echo "$CMD_JSON" | grep -q '"--workers"'
+            echo "$CMD_JSON" | grep -q '"1"'
+            USER_VAL=$(docker inspect "$IMG" --format '{{.Config.User}}')
+            echo "$IMG User: $USER_VAL"
+            test "$USER_VAL" = "10001"
+          done
+          docker run --rm mvp0-api:f2 python3 --version
+          docker run --rm mvp0-api:f2 uvicorn --version
+          docker run --rm mvp0-api:f2 alembic --version
 
-      - name: Validate Development Docker Compose startup
+      - name: Validate Development Docker Compose startup (API + Independent Kill Switch)
         run: |
-          docker compose up -d postgres redis api
+          docker compose up -d postgres redis api kill_switch
           READY=0
           for i in $(seq 1 30); do
-            if curl -fsS http://127.0.0.1:8000/readyz; then
+            if curl -fsS http://127.0.0.1:8000/readyz && curl -fsS http://127.0.0.1:8001/readyz; then
               echo ""
-              echo "Development API ready!"
+              echo "Development API and Independent Kill Switch Service ready!"
               READY=1
               break
             fi
@@ -54,19 +59,22 @@ jobs:
           fi
           curl -fsS http://127.0.0.1:8000/healthz
           curl -fsS http://127.0.0.1:8000/readyz
+          curl -fsS http://127.0.0.1:8001/healthz
+          curl -fsS http://127.0.0.1:8001/readyz
           curl -fsS http://127.0.0.1:8000/metrics | head -n 30
           docker compose ps
-          docker compose logs api
+          docker compose logs api kill_switch
           docker compose down -v
 
-      - name: Validate Paper Docker Compose startup and isolation
+      - name: Validate Paper Docker Compose startup and isolation (Paper API + Paper Kill Switch)
         run: |
           docker compose -f docker-compose.paper.yml up -d
           HEALTHY=0
           for i in $(seq 1 30); do
-            STATUS=$(docker inspect --format='{{.State.Health.Status}}' $(docker compose -f docker-compose.paper.yml ps -q paper_api))
-            echo "Paper API health status: $STATUS"
-            if [ "$STATUS" = "healthy" ]; then
+            API_STATUS=$(docker inspect --format='{{.State.Health.Status}}' $(docker compose -f docker-compose.paper.yml ps -q paper_api))
+            KS_STATUS=$(docker inspect --format='{{.State.Health.Status}}' $(docker compose -f docker-compose.paper.yml ps -q paper_kill_switch))
+            echo "Paper API: $API_STATUS | Paper Kill Switch: $KS_STATUS"
+            if [ "$API_STATUS" = "healthy" ] && [ "$KS_STATUS" = "healthy" ]; then
               HEALTHY=1
               break
             fi
@@ -78,6 +86,6 @@ jobs:
             exit 1
           fi
           docker compose -f docker-compose.paper.yml ps
-          docker compose -f docker-compose.paper.yml logs paper_api
+          docker compose -f docker-compose.paper.yml logs paper_api paper_kill_switch
           docker network inspect mvp0_paper_network --format '{{.Internal}}' | grep -q "true"
           docker compose -f docker-compose.paper.yml down -v

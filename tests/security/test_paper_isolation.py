@@ -42,7 +42,12 @@ def test_paper_services_only_attach_to_paper_network() -> None:
     """All services in docker-compose.paper.yml must attach only to paper_network."""
     paper_compose = _load_compose("docker-compose.paper.yml")
     services = paper_compose.get("services", {})
-    assert set(services.keys()) == {"paper_postgres", "paper_redis", "paper_api"}
+    assert set(services.keys()) == {
+        "paper_postgres",
+        "paper_redis",
+        "paper_api",
+        "paper_kill_switch",
+    }
 
     for service_name, service_cfg in services.items():
         attached_networks = service_cfg.get("networks", [])

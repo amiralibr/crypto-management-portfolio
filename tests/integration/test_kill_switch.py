@@ -485,7 +485,10 @@ async def test_resume_requires_admin_and_operator_roles() -> None:
 
 @pytest.mark.asyncio
 async def test_expired_resume_request_cannot_be_approved() -> None:
-    """Verify resume request expires after 24 hours and cannot be approved (§13.5)."""
+    """Verify resume request expires after 86400s (24 hours) and cannot be approved (§13.5)."""
+    from app.services.kill_switch import KILL_SWITCH_RESUME_REQUEST_EXPIRY_SECONDS
+
+    assert KILL_SWITCH_RESUME_REQUEST_EXPIRY_SECONDS == 86400
     await _reset_kill_switch_and_orders()
     now = datetime.now(UTC)
     requester_id = uuid.uuid4()
@@ -503,13 +506,14 @@ async def test_expired_resume_request_cannot_be_approved() -> None:
             reason="Root cause documented",
             now=now,
         )
+        assert int((req.expires_at - req.created_at).total_seconds()) == 86400
         with pytest.raises(InvalidStateError, match="Expired"):
             await ks.approve_resume_request(
                 session,
                 request_id=req.id,
                 approver_id=approver_id,
                 approver_role=ApiRole.OPERATIONAL,
-                now=now + timedelta(hours=25),
+                now=now + timedelta(seconds=86401),
             )
         await session.commit()
         assert req.status == ApprovalRequestStatus.EXPIRED.value

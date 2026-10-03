@@ -1,25 +1,36 @@
-"""Transient Redis client wrapper with strict error taxonomy for MVP-0."""
+"""Transient Redis client wrapper with strict central policy enforcement for MVP-0."""
 
 from redis.asyncio import Redis
 from redis.exceptions import RedisError
 
+from app.core.config import FORBIDDEN_DURABLE_PREFIXES
 from app.core.errors import RedisOperationError
 from app.core.logging import get_logger
 from app.core.metrics import REDIS_HEALTH_GAUGE
-
-FORBIDDEN_DURABLE_PREFIXES: tuple[str, ...] = (
-    "durable:",
-    "sot:",
-)
 
 
 class RedisClient:
     """Wrapper around async Redis client restricted to transient operational state."""
 
-    def __init__(self, redis_url: str, client: Redis | None = None) -> None:
+    def __init__(
+        self,
+        redis_url: str,
+        client: Redis | None = None,
+        forbidden_prefixes: tuple[str, ...] = FORBIDDEN_DURABLE_PREFIXES,
+    ) -> None:
         self._redis_url = redis_url
         self._client: Redis | None = client
+        self._forbidden_prefixes = forbidden_prefixes
         self._logger = get_logger("mvp0.redis")
+
+    def _validate_transient_key(self, key: str) -> None:
+        """Reject any key prefix reserved for durable domain state."""
+        normalized = key.strip().lower()
+        if any(normalized.startswith(prefix) for prefix in self._forbidden_prefixes):
+            raise RedisOperationError(
+                message="Redis must not be used as durable source of truth",
+                details={"key_prefix": normalized.split(":", 1)[0]},
+            )
 
     def _get_or_create_client(self) -> Redis:
         """Lazily create or return the underlying async Redis client."""
@@ -52,12 +63,7 @@ class RedisClient:
         ttl_seconds: int | None = 300,
     ) -> bool:
         """Store a transient string value in Redis."""
-        normalized = key.strip().lower()
-        if any(normalized.startswith(prefix) for prefix in FORBIDDEN_DURABLE_PREFIXES):
-            raise RedisOperationError(
-                message="Redis must not be used as durable source of truth",
-                details={"key_prefix": normalized.split(":", 1)[0]},
-            )
+        self._validate_transient_key(key)
         try:
             client = self._get_or_create_client()
             result = await client.set(name=key, value=value, ex=ttl_seconds)
@@ -72,6 +78,7 @@ class RedisClient:
 
     async def get(self, key: str) -> str | None:
         """Retrieve a transient string value from Redis."""
+        self._validate_transient_key(key)
         try:
             client = self._get_or_create_client()
             value = await client.get(name=key)
@@ -95,3 +102,6 @@ class RedisClient:
                 self._logger.warning("redis_close_failed", error_type=type(exc).__name__)
             finally:
                 self._client = None
+
+
+__all__ = ["FORBIDDEN_DURABLE_PREFIXES", "RedisClient"]

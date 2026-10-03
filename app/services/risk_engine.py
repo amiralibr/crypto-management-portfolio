@@ -1,13 +1,21 @@
 """Deterministic Risk Engine and Position Sizing service for MVP-0 (§10)."""
 
+import uuid
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from decimal import ROUND_DOWN, Decimal
+from typing import Any
 
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.core.config import MAX_RISK_PER_TRADE_PCT_CEILING
 from app.core.enums import ALLOWED_SYMBOLS, RiskDecisionStatus
 from app.core.metrics import RISK_REJECTIONS_TOTAL
+from app.db.models.system_state import SystemState
 
-MAX_RISK_PER_TRADE: Decimal = Decimal("0.005")  # 0.50%
+MAX_RISK_PER_TRADE: Decimal = MAX_RISK_PER_TRADE_PCT_CEILING  # 0.005 (0.50%)
+RISK_ENGINE_HEARTBEAT_STATE_KEY: str = "RISK_ENGINE_HEARTBEAT"
 MAX_DAILY_LOSS: Decimal = Decimal("0.02")  # 2.00%
 MAX_WEEKLY_LOSS: Decimal = Decimal("0.05")  # 5.00%
 MAX_ASSET_WEIGHT: Decimal = Decimal("0.15")  # 15.00%
@@ -225,6 +233,11 @@ class RiskEngine:
             ("exposure_multiplier", exposure_multiplier),
         ):
             ensure_decimal(val, name)
+
+        if risk_fraction <= Decimal("0") or risk_fraction > MAX_RISK_PER_TRADE:
+            raise ValueError(
+                f"risk_fraction must be in (0, {MAX_RISK_PER_TRADE}]; got {risk_fraction}"
+            )
 
         effective_risk_fraction = min(risk_fraction, MAX_RISK_PER_TRADE)
         effective_asset_weight = min(max_asset_weight, MAX_ASSET_WEIGHT)
@@ -475,6 +488,68 @@ class RiskEngine:
             sizing=sizing,
             recommend_kill_switch=False,
         )
+
+    async def record_heartbeat(
+        self,
+        session: AsyncSession,
+        *,
+        now: datetime | None = None,
+        metadata: dict[str, Any] | None = None,
+    ) -> SystemState:
+        """Record a durable Risk Engine heartbeat in PostgreSQL (F2 Requirement #2)."""
+        current_time = now or datetime.now(UTC)
+        stmt = (
+            select(SystemState)
+            .where(SystemState.state_key == RISK_ENGINE_HEARTBEAT_STATE_KEY)
+            .with_for_update()
+        )
+        hb_state = await session.scalar(stmt)
+        payload: dict[str, Any] = {
+            "service": "risk_engine",
+            "last_heartbeat_at": current_time.isoformat(),
+        }
+        if metadata:
+            payload.update(metadata)
+
+        if hb_state is None:
+            hb_state = SystemState(
+                id=uuid.uuid4(),
+                state_key=RISK_ENGINE_HEARTBEAT_STATE_KEY,
+                is_active=True,
+                exposure_multiplier=Decimal("1.0000"),
+                metadata_json=payload,
+                created_at=current_time,
+                updated_at=current_time,
+                version=1,
+            )
+            session.add(hb_state)
+        else:
+            hb_state.is_active = True
+            hb_state.metadata_json = payload
+            hb_state.updated_at = current_time
+            hb_state.version += 1
+        await session.flush()
+        return hb_state
+
+    async def get_last_heartbeat(self, session: AsyncSession) -> datetime | None:
+        """Return the timestamp of the most recent Risk Engine heartbeat in PostgreSQL."""
+        hb_state = await session.scalar(
+            select(SystemState).where(SystemState.state_key == RISK_ENGINE_HEARTBEAT_STATE_KEY)
+        )
+        if hb_state is None:
+            return None
+        return hb_state.updated_at
+
+    async def evaluate_with_heartbeat(
+        self,
+        session: AsyncSession,
+        risk_input: RiskEvaluationInput,
+        *,
+        now: datetime | None = None,
+    ) -> RiskEvaluationDecision:
+        """Record Risk Engine heartbeat in PostgreSQL and evaluate the risk input."""
+        await self.record_heartbeat(session, now=now)
+        return self.evaluate(risk_input)
 
     @staticmethod
     def _reject(

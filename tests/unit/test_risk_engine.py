@@ -242,6 +242,46 @@ def test_position_sizing_rounds_down_to_step_size() -> None:
     assert sizing.final_quantity == sizing.final_quantity.quantize(Decimal("0.0001"))
 
 
+def test_max_risk_per_trade_is_strictly_0_005_and_rejects_0_01() -> None:
+    """Verify max risk per trade ceiling is 0.005 (0.5%) and 0.01 (1.0%) is rejected (F2 Req #4)."""
+    from app.services.risk_engine import MAX_RISK_PER_TRADE
+
+    assert Decimal("0.005") == MAX_RISK_PER_TRADE
+    engine = RiskEngine()
+
+    # 0.005 (0.5%) is accepted
+    ok_ips = InvestmentPolicySnapshot(max_risk_per_trade=Decimal("0.005"))
+    assert ok_ips.validate() == []
+
+    # 0.01 (1.0%) in IPS is rejected
+    bad_ips = InvestmentPolicySnapshot(max_risk_per_trade=Decimal("0.01"))
+    assert "IPS_MAX_RISK_PER_TRADE_EXCEEDS_HARD_CAP" in bad_ips.validate()
+
+    # 0.01 (1.0%) in RiskEvaluationInput is rejected by evaluate()
+    bad_eval = engine.evaluate(
+        RiskEvaluationInput(
+            symbol="BTC/USDT",
+            direction="LONG",
+            entry_price=Decimal("60000"),
+            atr_14=Decimal("500"),
+            equity=Decimal("10000"),
+            risk_fraction=Decimal("0.01"),
+        )
+    )
+    assert bad_eval.decision == RiskDecisionStatus.REJECT
+    assert "RISK_PER_TRADE_EXCEEDED" in bad_eval.reason_codes
+
+    # 0.01 (1.0%) in calculate_position_size() raises ValueError
+    with pytest.raises(ValueError, match="0.005"):
+        engine.calculate_position_size(
+            equity=Decimal("10000"),
+            portfolio_value=Decimal("10000"),
+            entry_price=Decimal("60000"),
+            atr_14=Decimal("500"),
+            risk_fraction=Decimal("0.01"),
+        )
+
+
 def test_risk_engine_fail_closed_edge_cases() -> None:
     """Verify additional §10.4 fail-closed conditions (drawdown, loss caps, IPS, liquidity)."""
     engine = RiskEngine()

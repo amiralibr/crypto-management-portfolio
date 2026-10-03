@@ -385,3 +385,62 @@ async def test_system_and_risk_api_endpoints(
     assert app2_resp.json()["status"] == "APPROVED"
     assert app2_resp.json()["kill_switch_active"] is False
     assert app2_resp.json()["exposure_multiplier"] == "0.3000"
+
+
+@pytest.mark.asyncio
+async def test_dead_letter_admin_only_replay_via_api(
+    async_client: AsyncClient,
+    operational_headers: dict[str, str],
+    admin_headers: dict[str, str],
+) -> None:
+    """Verify POST /api/v1/system/dead-letters/{id}/replay is Admin-only (F2 Req #6)."""
+    init_db()
+    factory = get_session_factory()
+    service = OutboxService()
+    now = datetime.now(UTC)
+
+    async def _fail_handler(_ev: OutboxEvent) -> None:
+        raise RuntimeError("Downstream consumer failure")
+
+    async with factory() as session:
+        ev = await service.enqueue_event(
+            session,
+            event_type=OutboxEventType.ORDER_CREATED.value,
+            aggregate_type="ORDER",
+            aggregate_id=uuid.uuid4(),
+            payload={"order_id": "DLQ-API-1"},
+        )
+        for i in range(5):
+            await service.process_pending_events(
+                session,
+                handler=_fail_handler,
+                now=now + timedelta(minutes=i * 5),
+            )
+        dlq = await session.scalar(
+            select(DeadLetterEvent).where(DeadLetterEvent.original_outbox_event_id == ev.id)
+        )
+        await session.commit()
+        assert dlq is not None
+        dlq_id = str(dlq.id)
+
+    await dispose_db()
+
+    # 1. OPERATIONAL key is rejected with 403 Forbidden
+    op_resp = await async_client.post(
+        f"/api/v1/system/dead-letters/{dlq_id}/replay",
+        headers=operational_headers,
+        json={"resolution_note": "Operator attempting replay"},
+    )
+    assert op_resp.status_code == 403
+
+    # 2. ADMIN key succeeds with 200 OK and creates a new PENDING Outbox event
+    adm_resp = await async_client.post(
+        f"/api/v1/system/dead-letters/{dlq_id}/replay",
+        headers=admin_headers,
+        json={"resolution_note": "Admin approved replay after fixing consumer"},
+    )
+    assert adm_resp.status_code == 200
+    body = adm_resp.json()
+    assert body["dead_letter_id"] == dlq_id
+    assert body["resolution_status"] == DeadLetterResolutionStatus.REPLAYED.value
+    assert body["replayed_outbox_status"] == OutboxStatus.PENDING.value

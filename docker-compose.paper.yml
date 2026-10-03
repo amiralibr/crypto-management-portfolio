@@ -62,6 +62,9 @@ services:
       LIVE_TRADING: "false"
       PAPER_TRADING: "true"
       PRICE_DRIFT_EXPIRY_THRESHOLD: "0.002"
+      MAX_RISK_PER_TRADE_PCT: "0.005"
+      KILL_SWITCH_RESUME_REQUEST_EXPIRY_SECONDS: 86400
+      RISK_ENGINE_HEARTBEAT_TIMEOUT_SECONDS: 60
       OUTBOX_MAX_RETRIES: 5
       OUTBOX_RETRY_BASE_SECONDS: 2
     command: >
@@ -77,6 +80,61 @@ services:
           "python3",
           "-c",
           "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/readyz', timeout=3)",
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+
+  paper_kill_switch:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.kill-switch
+    restart: unless-stopped
+    depends_on:
+      paper_postgres:
+        condition: service_healthy
+      paper_redis:
+        condition: service_healthy
+      paper_api:
+        condition: service_healthy
+    environment:
+      ENVIRONMENT: paper
+      LOG_LEVEL: INFO
+      APP_NAME: mvp0-paper
+      POSTGRES_HOST: paper_postgres
+      POSTGRES_PORT: 5432
+      POSTGRES_DB: mvp0_paper
+      POSTGRES_USER: mvp0paper
+      POSTGRES_PASSWORD: ${PAPER_POSTGRES_PASSWORD:-paper_local_only_pw}
+      DATABASE_URL: postgresql+asyncpg://mvp0paper:${PAPER_POSTGRES_PASSWORD:-paper_local_only_pw}@paper_postgres:5432/mvp0_paper
+      REDIS_HOST: paper_redis
+      REDIS_PORT: 6379
+      REDIS_PASSWORD: ${PAPER_REDIS_PASSWORD:-paper_local_only_pw}
+      REDIS_URL: redis://:${PAPER_REDIS_PASSWORD:-paper_local_only_pw}@paper_redis:6379/0
+      MVP0_API_KEY: ${PAPER_MVP0_API_KEY:-paper_operational_placeholder_key_0001}
+      MVP0_ADMIN_API_KEY: ${PAPER_MVP0_ADMIN_API_KEY:-paper_admin_placeholder_key_00000002}
+      UVICORN_WORKERS: 1
+      SUPERVISOR_TASKS: 1
+      LIVE_TRADING: "false"
+      PAPER_TRADING: "true"
+      PRICE_DRIFT_EXPIRY_THRESHOLD: "0.002"
+      MAX_RISK_PER_TRADE_PCT: "0.005"
+      KILL_SWITCH_RESUME_REQUEST_EXPIRY_SECONDS: 86400
+      RISK_ENGINE_HEARTBEAT_TIMEOUT_SECONDS: 60
+      OUTBOX_MAX_RETRIES: 5
+      OUTBOX_RETRY_BASE_SECONDS: 2
+    command: >
+      sh -c "./scripts/wait-for-postgres.sh &&
+      uvicorn app.kill_switch_service:app --host 0.0.0.0 --port 8001 --workers 1"
+    networks:
+      - paper_network
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "python3",
+          "-c",
+          "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8001/readyz', timeout=3)",
         ]
       interval: 10s
       timeout: 5s

@@ -1,0 +1,56 @@
+# syntax=docker/dockerfile:1
+FROM python:3.12.8-slim-bookworm AS builder
+
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    PIP_NO_CACHE_DIR=1 \
+    POETRY_VERSION=2.5.1 \
+    POETRY_VIRTUALENVS_IN_PROJECT=true \
+    POETRY_NO_INTERACTION=1
+
+WORKDIR /app
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential \
+    libpq-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN pip install "poetry==${POETRY_VERSION}"
+
+COPY pyproject.toml poetry.lock ./
+RUN poetry install --only main --no-root
+
+COPY app ./app
+COPY alembic ./alembic
+COPY alembic.ini ./alembic.ini
+COPY scripts ./scripts
+
+FROM python:3.12.8-slim-bookworm AS runtime
+
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    PATH="/app/.venv/bin:$PATH" \
+    UVICORN_WORKERS=1 \
+    SUPERVISOR_TASKS=1 \
+    LIVE_TRADING=false \
+    PAPER_TRADING=true \
+    KILL_SWITCH_RESUME_REQUEST_EXPIRY_SECONDS=86400 \
+    RISK_ENGINE_HEARTBEAT_TIMEOUT_SECONDS=60
+
+WORKDIR /app
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    libpq5 \
+    postgresql-client \
+    && rm -rf /var/lib/apt/lists/* \
+    && groupadd --gid 10001 mvp0 \
+    && useradd --uid 10001 --gid 10001 --create-home --shell /usr/sbin/nologin mvp0
+
+COPY --from=builder --chown=mvp0:mvp0 /app /app
+RUN chmod +x /app/scripts/*.sh
+
+USER 10001
+
+EXPOSE 8001
+
+CMD ["uvicorn", "app.kill_switch_service:app", "--host", "0.0.0.0", "--port", "8001", "--workers", "1"]

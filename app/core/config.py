@@ -1,4 +1,4 @@
-"""Application configuration and startup validation for MVP-0."""
+"""Application configuration and central policy validation for MVP-0."""
 
 import secrets
 from decimal import Decimal
@@ -18,6 +18,33 @@ MIN_OUTBOX_MAX_RETRIES: int = 1
 MAX_OUTBOX_MAX_RETRIES: int = 10
 MIN_OUTBOX_RETRY_BASE_SECONDS: int = 1
 MAX_OUTBOX_RETRY_BASE_SECONDS: int = 60
+
+# Central policy for prohibited durable domain prefixes in Redis (F2 Requirement #9)
+FORBIDDEN_DURABLE_PREFIXES: tuple[str, ...] = (
+    "durable:",
+    "sot:",
+    "order:",
+    "orders:",
+    "position:",
+    "positions:",
+    "trade:",
+    "trades:",
+    "signal:",
+    "signals:",
+    "approval:",
+    "approvals:",
+    "audit:",
+    "outbox:",
+    "dead_letter:",
+    "dlq:",
+    "kill_switch:",
+    "resume:",
+)
+
+# Central risk & safety policy constants (F2 Requirements #2, #3, #4)
+MAX_RISK_PER_TRADE_PCT_CEILING: Decimal = Decimal("0.005")
+REQUIRED_KILL_SWITCH_RESUME_REQUEST_EXPIRY_SECONDS: int = 86400
+DEFAULT_RISK_ENGINE_HEARTBEAT_TIMEOUT_SECONDS: int = 60
 
 
 class Settings(BaseSettings):
@@ -44,6 +71,7 @@ class Settings(BaseSettings):
     REDIS_PORT: int = 6379
     REDIS_PASSWORD: str | None = None
     REDIS_URL: str | None = None
+    FORBIDDEN_DURABLE_PREFIXES: tuple[str, ...] = FORBIDDEN_DURABLE_PREFIXES
 
     MVP0_API_KEY: SecretStr
     MVP0_ADMIN_API_KEY: SecretStr
@@ -55,6 +83,11 @@ class Settings(BaseSettings):
     LIVE_TRADING: bool = False
     PAPER_TRADING: bool = True
     PRICE_DRIFT_EXPIRY_THRESHOLD: Decimal = Decimal("0.002")
+    MAX_RISK_PER_TRADE_PCT: Decimal = MAX_RISK_PER_TRADE_PCT_CEILING
+    KILL_SWITCH_RESUME_REQUEST_EXPIRY_SECONDS: int = (
+        REQUIRED_KILL_SWITCH_RESUME_REQUEST_EXPIRY_SECONDS
+    )
+    RISK_ENGINE_HEARTBEAT_TIMEOUT_SECONDS: int = DEFAULT_RISK_ENGINE_HEARTBEAT_TIMEOUT_SECONDS
 
     OUTBOX_MAX_RETRIES: int = 5
     OUTBOX_RETRY_BASE_SECONDS: int = 2
@@ -129,6 +162,38 @@ class Settings(BaseSettings):
             raise ValueError(
                 f"PRICE_DRIFT_EXPIRY_THRESHOLD must be between "
                 f"{MIN_PRICE_DRIFT_THRESHOLD} and {MAX_PRICE_DRIFT_THRESHOLD}"
+            )
+        return value
+
+    @field_validator("MAX_RISK_PER_TRADE_PCT")
+    @classmethod
+    def validate_max_risk_per_trade_pct(cls, value: Decimal) -> Decimal:
+        """Enforce max risk per trade ceiling of 0.005 (0.5%)."""
+        if value <= Decimal("0") or value > MAX_RISK_PER_TRADE_PCT_CEILING:
+            raise ValueError(
+                f"MAX_RISK_PER_TRADE_PCT must be in (0, {MAX_RISK_PER_TRADE_PCT_CEILING}]"
+            )
+        return value
+
+    @field_validator("KILL_SWITCH_RESUME_REQUEST_EXPIRY_SECONDS")
+    @classmethod
+    def validate_kill_switch_resume_expiry(cls, value: int) -> int:
+        """Enforce KILL_SWITCH_RESUME_REQUEST_EXPIRY_SECONDS == 86400 (24 hours)."""
+        if value != REQUIRED_KILL_SWITCH_RESUME_REQUEST_EXPIRY_SECONDS:
+            raise ValueError(
+                f"KILL_SWITCH_RESUME_REQUEST_EXPIRY_SECONDS must be exactly "
+                f"{REQUIRED_KILL_SWITCH_RESUME_REQUEST_EXPIRY_SECONDS}"
+            )
+        return value
+
+    @field_validator("RISK_ENGINE_HEARTBEAT_TIMEOUT_SECONDS")
+    @classmethod
+    def validate_risk_engine_heartbeat_timeout(cls, value: int) -> int:
+        """Enforce RISK_ENGINE_HEARTBEAT_TIMEOUT_SECONDS is positive and <= 60s."""
+        if value <= 0 or value > DEFAULT_RISK_ENGINE_HEARTBEAT_TIMEOUT_SECONDS:
+            raise ValueError(
+                f"RISK_ENGINE_HEARTBEAT_TIMEOUT_SECONDS must be in "
+                f"(0, {DEFAULT_RISK_ENGINE_HEARTBEAT_TIMEOUT_SECONDS}]"
             )
         return value
 

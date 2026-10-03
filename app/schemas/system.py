@@ -122,3 +122,20 @@ class ResumeRequestResponse(BaseModel):
     kill_switch_active: bool
     exposure_multiplier: str
     request_id: str
+
+
+class DeadLetterReplayRequest(BaseModel):
+    """Request payload for Admin-only replay of a Dead-Letter event (§19.4)."""
+
+    resolution_note: str = Field(..., min_length=3, max_length=500)
+    actor_id: uuid.UUID | None = None
+
+
+class DeadLetterReplayResponse(BaseModel):
+    """Response payload for Admin-only replay of a Dead-Letter event (§19.4)."""
+
+    dead_letter_id: str
+    resolution_status: str
+    replayed_outbox_event_id: str
+    replayed_outbox_status: str
+    request_id: str

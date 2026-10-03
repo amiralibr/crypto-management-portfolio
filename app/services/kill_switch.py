@@ -9,6 +9,10 @@ from typing import Any
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.config import (
+    DEFAULT_RISK_ENGINE_HEARTBEAT_TIMEOUT_SECONDS,
+    REQUIRED_KILL_SWITCH_RESUME_REQUEST_EXPIRY_SECONDS,
+)
 from app.core.enums import (
     ApiRole,
     ApprovalRequestStatus,
@@ -39,10 +43,13 @@ from app.integrations.exchange.base import ExchangeAdapter
 from app.integrations.notifications.base import NotificationAdapter
 from app.services.outbox import OutboxService, record_audit_log
 from app.services.reconciliation import ReconciliationService
+from app.services.risk_engine import RISK_ENGINE_HEARTBEAT_STATE_KEY
 from app.services.state_machine import StateMachineService
 
 KILL_SWITCH_STATE_KEY: str = "KILL_SWITCH"
+KILL_SWITCH_RESUME_REQUEST_EXPIRY_SECONDS: int = REQUIRED_KILL_SWITCH_RESUME_REQUEST_EXPIRY_SECONDS
 RESUME_REQUEST_EXPIRY_HOURS: int = 24
+RISK_ENGINE_HEARTBEAT_TIMEOUT_SECONDS: int = DEFAULT_RISK_ENGINE_HEARTBEAT_TIMEOUT_SECONDS
 REDUCED_EXPOSURE_MULTIPLIER: Decimal = Decimal("0.3000")
 
 
@@ -407,6 +414,39 @@ class KillSwitchService:
             disabled_stops_count=disabled_stops_count,
         )
 
+    async def check_risk_engine_heartbeat(
+        self,
+        session: AsyncSession,
+        *,
+        timeout_seconds: int = RISK_ENGINE_HEARTBEAT_TIMEOUT_SECONDS,
+        now: datetime | None = None,
+    ) -> KillSwitchActivationResult | None:
+        """Check Risk Engine heartbeat and activate Kill Switch if missing for >60s."""
+        current_time = now or datetime.now(UTC)
+        hb_state = await session.scalar(
+            select(SystemState).where(SystemState.state_key == RISK_ENGINE_HEARTBEAT_STATE_KEY)
+        )
+        if hb_state is None:
+            return await self.activate(
+                session,
+                reason=f"Risk Engine heartbeat missing (exceeded {timeout_seconds}s timeout)",
+                actor_role="SYSTEM",
+                now=current_time,
+            )
+
+        elapsed_seconds = (current_time - hb_state.updated_at).total_seconds()
+        if elapsed_seconds > timeout_seconds:
+            return await self.activate(
+                session,
+                reason=(
+                    f"Risk Engine heartbeat stale for {elapsed_seconds:.1f}s "
+                    f"(limit {timeout_seconds}s)"
+                ),
+                actor_role="SYSTEM",
+                now=current_time,
+            )
+        return None
+
     async def create_resume_request(
         self,
         session: AsyncSession,
@@ -443,7 +483,7 @@ class KillSwitchService:
             second_approver_role=None,
             second_approved_at=None,
             reason=clean_reason,
-            expires_at=current_time + timedelta(hours=RESUME_REQUEST_EXPIRY_HOURS),
+            expires_at=current_time + timedelta(seconds=KILL_SWITCH_RESUME_REQUEST_EXPIRY_SECONDS),
             completed_at=None,
             created_at=current_time,
             updated_at=current_time,
