@@ -45,9 +45,9 @@ class TestSignalFactory:
         if strategy is None:
             strategy = Strategy(
                 id=uuid.uuid4(),
+                strategy_code=f"STRAT-{strategy_name.upper()[:24]}",
                 name=strategy_name,
-                version="1.0.0",
-                description="TestSignalFactory synthetic strategy (Paper-only)",
+                timeframe="1H",
                 is_active=True,
                 config_json={"timeframe": "1H", "mode": "PAPER"},
             )

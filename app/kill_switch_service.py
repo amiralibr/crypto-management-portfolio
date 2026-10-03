@@ -198,7 +198,7 @@ def create_kill_switch_app() -> FastAPI:
             "request_id": get_request_id(request),
         }
 
-    application.include_router(system_router.router, prefix="/api/v1/system", tags=["system"])
+    application.include_router(system_router.router, prefix="/api/v1", tags=["system"])
     return application
 
 

@@ -1,7 +1,7 @@
 """F2 End-to-End tests using TestSignalFactory without a real Signal Engine (F2 Req #5)."""
 
 import uuid
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime
 from decimal import Decimal
 
 import pytest
@@ -75,7 +75,7 @@ async def test_e2e_signal_to_protected_order_and_stop_execution_with_test_signal
         assert last_hb is not None
 
         # 3. Verify price drift (< 0.2%) and transition Signal PENDING_APPROVAL -> APPROVED
-        paper_exchange.set_ticker("BTC/USDT", price=Decimal("60030.00"), now=now)
+        paper_exchange.set_ticker("BTC/USDT", price=Decimal("60030.00"))
         checked_sig = await approval_svc.check_signal_timeout(
             session,
             signal_id=bundle.signal.id,
@@ -94,7 +94,7 @@ async def test_e2e_signal_to_protected_order_and_stop_execution_with_test_signal
         )
         assert approved_sig.approval_status == SignalApprovalStatus.APPROVED.value
 
-        # 4. Create Order and progress CREATED -> APPROVED -> SUBMITTING -> SUBMITTED -> FILLED
+        # 4. Create Order and progress through state machine to FILLED
         order = Order(
             id=uuid.uuid4(),
             signal_id=bundle.signal.id,
@@ -104,8 +104,9 @@ async def test_e2e_signal_to_protected_order_and_stop_execution_with_test_signal
             symbol="BTC/USDT",
             side="BUY",
             order_type="MARKET",
-            status=OrderState.CREATED.value,
-            state_machine_state=OrderState.CREATED.value,
+            status=OrderState.SIGNAL_CREATED.value,
+            state_machine_state=OrderState.SIGNAL_CREATED.value,
+            risk_decision=RiskDecisionStatus.APPROVE.value,
             quantity=decision.sizing.final_quantity,
             filled_quantity=Decimal("0"),
             limit_price=Decimal("60000.00"),
@@ -118,8 +119,9 @@ async def test_e2e_signal_to_protected_order_and_stop_execution_with_test_signal
         await session.flush()
 
         for next_state in (
+            OrderState.PENDING_APPROVAL,
             OrderState.APPROVED,
-            OrderState.SUBMITTING,
+            OrderState.PRE_TRADE_VALIDATION,
             OrderState.SUBMITTED,
         ):
             await sm.transition_order_state(
@@ -135,9 +137,8 @@ async def test_e2e_signal_to_protected_order_and_stop_execution_with_test_signal
             order_type=order.order_type,
             quantity=order.quantity,
             client_order_id=order.client_order_id,
-            price=Decimal("60000.00"),
+            limit_price=Decimal("60000.00"),
         )
-        order.exchange_order_id = receipt.exchange_order_id
         order.filled_quantity = receipt.filled_quantity
         order.average_fill_price = receipt.average_fill_price
         await sm.transition_order_state(
@@ -191,10 +192,9 @@ async def test_e2e_signal_to_protected_order_and_stop_execution_with_test_signal
         paper_exchange.set_ticker(
             "BTC/USDT",
             price=decision.sizing.stop_loss_price - Decimal("100.00"),
-            now=now + timedelta(seconds=10),
         )
         results = await stop_svc.monitor_armed_stops(session)
-        assert any(r.position_id == position.id and r.triggered for r in results)
+        assert any(r.triggered and r.status == SyntheticStopStatus.EXECUTED.value for r in results)
 
         updated_pos = await session.scalar(select(Position).where(Position.id == position.id))
         assert updated_pos is not None

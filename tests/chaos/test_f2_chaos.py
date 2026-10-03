@@ -14,7 +14,7 @@ from decimal import Decimal
 
 import pytest
 from httpx import ASGITransport, AsyncClient
-from sqlalchemy import select
+from sqlalchemy import delete, select
 
 from app.core.config import FORBIDDEN_DURABLE_PREFIXES
 from app.core.enums import (
@@ -32,7 +32,7 @@ from app.db.session import dispose_db, get_session_factory, init_db
 from app.integrations.exchange.fake import FakeExchangeAdapter
 from app.kill_switch_service import create_kill_switch_app, kill_switch_lifespan
 from app.services.kill_switch import KILL_SWITCH_STATE_KEY, KillSwitchService
-from app.services.risk_engine import RiskEngine
+from app.services.risk_engine import RISK_ENGINE_HEARTBEAT_STATE_KEY, RiskEngine
 from app.services.synthetic_stop import SyntheticStopService
 from tests.conftest import TEST_REDIS_URL
 from tests.factories import TestSignalFactory
@@ -63,6 +63,7 @@ async def test_chaos_api_disconnection_and_recovery(migrated_db: None) -> None:
             order_type="MARKET",
             status=OrderState.PROTECTED.value,
             state_machine_state=OrderState.PROTECTED.value,
+            risk_decision="APPROVE",
             quantity=Decimal("0.10"),
             filled_quantity=Decimal("0.10"),
             average_fill_price=Decimal("60000.00"),
@@ -103,8 +104,8 @@ async def test_chaos_api_disconnection_and_recovery(migrated_db: None) -> None:
         )
 
         # Simulate market drop while exchange API is disconnected after ticker fetch
-        fake_exchange.set_ticker("BTC/USDT", price=Decimal("58500.00"), now=now)
-        fake_exchange.fail_place_order_times = 10
+        fake_exchange.set_ticker("BTC/USDT", price=Decimal("58500.00"))
+        fake_exchange.fail_next_place_order_count = 10
 
         exec_res = await stop_svc.evaluate_and_execute_stop(
             session,
@@ -113,11 +114,11 @@ async def test_chaos_api_disconnection_and_recovery(migrated_db: None) -> None:
         )
         await session.commit()
         assert exec_res.triggered is True
-        assert exec_res.final_status == SyntheticStopStatus.MANUAL_REVIEW
+        assert exec_res.status == SyntheticStopStatus.MANUAL_REVIEW.value
         assert exec_res.attempts_executed == 3
 
         # Reconnect API and verify a new stop executes cleanly
-        fake_exchange.fail_place_order_times = 0
+        fake_exchange.fail_next_place_order_count = 0
         pos.status = PositionStatus.OPEN.value
         await session.flush()
         stop_recovered = await stop_svc.register_stop(
@@ -133,7 +134,7 @@ async def test_chaos_api_disconnection_and_recovery(migrated_db: None) -> None:
             sleep_fn=_no_op_sleep,
         )
         await session.commit()
-        assert exec_ok.final_status == SyntheticStopStatus.EXECUTED
+        assert exec_ok.status == SyntheticStopStatus.EXECUTED.value
 
     await dispose_db()
 
@@ -151,8 +152,24 @@ async def test_chaos_risk_engine_heartbeat_timeout_triggers_kill_switch(
 
     t0 = datetime.now(UTC) - timedelta(seconds=65)
     async with factory() as session:
-        # Ensure Kill Switch starts inactive and record a heartbeat 65 seconds in the past
+        # 1. Missing heartbeat row triggers Kill Switch immediately
+        await session.execute(
+            delete(SystemState).where(SystemState.state_key == RISK_ENGINE_HEARTBEAT_STATE_KEY)
+        )
+        await session.flush()
+        missing_res = await ks.check_risk_engine_heartbeat(session)
+        assert missing_res is not None
+        assert missing_res.is_active is True
+
+        # 2. Fresh heartbeat (< 60s) does not trigger Kill Switch
         state = await ks.get_or_create_state(session, for_update=True)
+        state.is_active = False
+        state.resume_status = None
+        await risk_engine.record_heartbeat(session, now=datetime.now(UTC))
+        fresh_res = await ks.check_risk_engine_heartbeat(session)
+        assert fresh_res is None
+
+        # 3. Ensure Kill Switch starts inactive and record a heartbeat 65 seconds in the past
         state.is_active = False
         state.resume_status = None
         await risk_engine.record_heartbeat(session, now=t0)
@@ -162,6 +179,11 @@ async def test_chaos_risk_engine_heartbeat_timeout_triggers_kill_switch(
     ks_app = create_kill_switch_app()
     transport = ASGITransport(app=ks_app)
     async with AsyncClient(transport=transport, base_url="http://testserver") as client:
+        health_resp = await client.get("/healthz")
+        assert health_resp.status_code == 200
+        ready_resp = await client.get("/readyz")
+        assert ready_resp.status_code == 200
+
         resp = await client.post(
             "/api/v1/kill-switch/heartbeat-check",
             headers=admin_headers,
