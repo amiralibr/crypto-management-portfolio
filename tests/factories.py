@@ -1,9 +1,8 @@
 """TestSignalFactory for F2 E2E testing without implementing a real Signal Engine (F2 Req #5)."""
 
-import hashlib
 import uuid
 from dataclasses import dataclass
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime
 from decimal import Decimal
 
 from sqlalchemy import select
@@ -13,7 +12,7 @@ from app.core.enums import SignalApprovalStatus
 from app.db.models.exchange_account import ExchangeAccount
 from app.db.models.signal import Signal
 from app.db.models.strategy import Strategy
-from app.services.approval_timeout import compute_effective_timeout_minutes
+from app.services.approval_timeout import compute_effective_timeout
 from app.services.risk_engine import (
     MAX_RISK_PER_TRADE,
     InvestmentPolicySnapshot,
@@ -84,7 +83,7 @@ class TestSignalFactory:
         atr_multiplier: Decimal = Decimal("2.0"),
         equity: Decimal = Decimal("10000.00"),
         risk_fraction: Decimal = MAX_RISK_PER_TRADE,
-        confidence: Decimal = Decimal("0.850000000000"),
+        confidence: Decimal = Decimal("0.8500"),
         ips: InvestmentPolicySnapshot | None = None,
         now: datetime | None = None,
     ) -> SyntheticSignalBundle:
@@ -93,27 +92,32 @@ class TestSignalFactory:
         strategy, account = await cls.ensure_strategy_and_account(session)
         effective_ips = ips or InvestmentPolicySnapshot()
 
-        timeout_mins = compute_effective_timeout_minutes(timeframe, effective_ips)
+        timeout_delta = compute_effective_timeout(
+            timeframe,
+            effective_ips.approval_timeout_minutes,
+        )
         stop_loss_price = max(Decimal("1"), entry_price - (atr_14 * atr_multiplier))
         take_profit_price = entry_price + (atr_14 * atr_multiplier * Decimal("2"))
-        dedup_seed = f"{strategy.id}:{symbol}:{timeframe}:{current_time.isoformat()}:{uuid.uuid4()}"
-        dedup_hash = hashlib.sha256(dedup_seed.encode("utf-8")).hexdigest()[:64]
 
         signal = Signal(
             id=uuid.uuid4(),
+            signal_id=f"SIG-E2E-{uuid.uuid4().hex[:12].upper()}",
             strategy_id=strategy.id,
             symbol=symbol,
-            direction=direction,
             timeframe=timeframe,
-            entry_price=entry_price,
+            direction=direction,
+            reference_price=entry_price,
+            entry_range_min=entry_price * Decimal("0.999"),
+            entry_range_max=entry_price * Decimal("1.001"),
             stop_loss_price=stop_loss_price,
             take_profit_price=take_profit_price,
-            confidence=confidence,
-            approval_status=SignalApprovalStatus.PENDING.value,
-            approval_price=entry_price,
-            expires_at=current_time + timedelta(minutes=timeout_mins),
-            dedup_hash=dedup_hash,
-            raw_payload_json={
+            risk_reward_ratio=Decimal("2.000000"),
+            data_quality_score=Decimal("0.9900"),
+            confidence_score=confidence,
+            rule_version="v1.0.0",
+            approval_status=SignalApprovalStatus.PENDING_APPROVAL.value,
+            approval_expires_at=current_time + timeout_delta,
+            explanation_json={
                 "factory": "TestSignalFactory",
                 "symbol": symbol,
                 "timeframe": timeframe,

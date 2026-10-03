@@ -41,7 +41,10 @@ async def test_e2e_signal_to_protected_order_and_stop_execution_with_test_signal
     outbox = OutboxService()
     sm = StateMachineService(outbox_service=outbox)
     risk_engine = RiskEngine()
-    approval_svc = ApprovalTimeoutService(state_machine=sm, outbox_service=outbox)
+    approval_svc = ApprovalTimeoutService(
+        exchange_adapter=paper_exchange,
+        outbox_service=outbox,
+    )
     stop_svc = SyntheticStopService(exchange_adapter=paper_exchange, outbox_service=outbox)
 
     now = datetime.now(UTC)
@@ -71,15 +74,15 @@ async def test_e2e_signal_to_protected_order_and_stop_execution_with_test_signal
         last_hb = await risk_engine.get_last_heartbeat(session)
         assert last_hb is not None
 
-        # 3. Verify price drift (< 0.2%) and transition Signal PENDING -> APPROVED
+        # 3. Verify price drift (< 0.2%) and transition Signal PENDING_APPROVAL -> APPROVED
         paper_exchange.set_ticker("BTC/USDT", price=Decimal("60030.00"), now=now)
-        drift_result = await approval_svc.validate_price_drift_before_submission(
+        checked_sig = await approval_svc.check_signal_timeout(
             session,
             signal_id=bundle.signal.id,
             current_price=Decimal("60030.00"),
             now=now,
         )
-        assert drift_result.expired is False
+        assert checked_sig.approval_status == SignalApprovalStatus.PENDING_APPROVAL.value
 
         approved_sig = await sm.transition_signal_status(
             session,
@@ -267,7 +270,7 @@ async def test_e2e_signal_rejected_when_risk_per_trade_is_0_01_or_higher(
 async def test_e2e_signal_expired_by_price_drift_with_test_signal_factory(
     migrated_db: None,
 ) -> None:
-    """TestSignalFactory signal expires with EXPIRED_BY_PRICE_DRIFT when drift > 0.2%."""
+    """TestSignalFactory signal expires with PRICE_DRIFT_EXPIRED when drift > 0.2%."""
     init_db()
     factory = get_session_factory()
     approval_svc = ApprovalTimeoutService()
@@ -276,18 +279,17 @@ async def test_e2e_signal_expired_by_price_drift_with_test_signal_factory(
         bundle = await TestSignalFactory.create_signal(
             session,
             symbol="BTC/USDT",
-            timeframe="15M",
+            timeframe="1H",
             entry_price=Decimal("60000.00"),
             atr_14=Decimal("400.00"),
         )
         # 60000 -> 60200 is +0.333% drift (> 0.2% threshold)
-        drift_res = await approval_svc.validate_price_drift_before_submission(
+        expired_sig = await approval_svc.check_signal_timeout(
             session,
             signal_id=bundle.signal.id,
             current_price=Decimal("60200.00"),
         )
         await session.commit()
-        assert drift_res.expired is True
-        assert drift_res.status == SignalApprovalStatus.EXPIRED_BY_PRICE_DRIFT.value
+        assert expired_sig.approval_status == SignalApprovalStatus.PRICE_DRIFT_EXPIRED.value
 
     await dispose_db()
