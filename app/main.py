@@ -28,10 +28,32 @@ from app.core.redis import RedisClient
 from app.db.session import (
     check_migrations_current,
     dispose_db,
+    get_session_factory,
     init_db,
     ping_database,
 )
+from app.integrations.exchange.paper import PaperTradingAdapter
 from app.schemas.system import HealthzResponse, ReadyzResponse
+from app.services.risk_engine import RiskEngine
+from app.workers.approval_timeout import (
+    WORKER_NAME as APPROVAL_TIMEOUT_WORKER_NAME,
+)
+from app.workers.approval_timeout import (
+    approval_timeout_worker_loop,
+)
+from app.workers.outbox_publisher import (
+    WORKER_NAME as OUTBOX_PUBLISHER_WORKER_NAME,
+)
+from app.workers.outbox_publisher import (
+    outbox_publisher_worker_loop,
+)
+from app.workers.supervisor import WorkerSupervisor
+from app.workers.synthetic_stop import (
+    WORKER_NAME as SYNTHETIC_STOP_WORKER_NAME,
+)
+from app.workers.synthetic_stop import (
+    synthetic_stop_worker_loop,
+)
 
 
 def _collect_secrets(settings: Settings) -> list[str]:
@@ -51,8 +73,10 @@ def _collect_secrets(settings: Settings) -> list[str]:
 
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
-    """Manage startup and shutdown lifecycle according to F1 §5.2 and §5.3."""
+    """Manage startup and shutdown lifecycle according to Contract §17.1 and §17.2."""
+    # 1. Load settings
     settings = get_settings()
+    # 2. Initialize structured logging
     configure_logging(
         log_level=settings.LOG_LEVEL,
         environment=settings.ENVIRONMENT,
@@ -61,16 +85,71 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     )
     logger = get_logger("mvp0.lifecycle")
 
+    # 3. Validate trading mode
     if settings.LIVE_TRADING or not settings.PAPER_TRADING:
         raise RuntimeError("Invalid trading mode: MVP-0 requires Paper-only mode")
 
-    engine, _ = init_db(settings)
+    # 4. Create database engine
+    engine, session_factory = init_db(settings)
     redis_client = RedisClient(settings.redis_url)
     app.state.redis_client = redis_client
     app.state.background_tasks = []
 
+    # 5. Ping PostgreSQL & 6. Ping Redis
     db_ok = await ping_database(engine)
     redis_ok = await redis_client.ping()
+
+    exchange_adapter = PaperTradingAdapter()
+    supervisor = WorkerSupervisor(
+        exchange_adapter=exchange_adapter,
+        session_factory=session_factory,
+    )
+    app.state.exchange_adapter = exchange_adapter
+    app.state.worker_supervisor = supervisor
+    app.state.recovered_stops_count = 0
+    app.state.reconciliation_report = None
+
+    # 7. Recover active Synthetic Stops & 8. Reconcile open positions (+ record heartbeat)
+    if db_ok and await check_migrations_current(engine):
+        recovered_stops, recon_report = await supervisor.recover_and_reconcile_on_startup()
+        app.state.recovered_stops_count = recovered_stops
+        app.state.reconciliation_report = recon_report
+        async with get_session_factory()() as hb_session:
+            await RiskEngine().record_heartbeat(
+                hb_session,
+                metadata={"source": "mvp0_api_lifespan_startup"},
+            )
+            await hb_session.commit()
+
+    # 9. Start supervisor & 10-12. Start Approval Timeout, Synthetic Stop, and Outbox workers
+    stop_event = asyncio.Event()
+    app.state.worker_stop_event = stop_event
+    approval_task = supervisor.start_worker(
+        APPROVAL_TIMEOUT_WORKER_NAME,
+        lambda: approval_timeout_worker_loop(
+            exchange_adapter=exchange_adapter,
+            session_factory=session_factory,
+            stop_event=stop_event,
+        ),
+    )
+    stop_task = supervisor.start_worker(
+        SYNTHETIC_STOP_WORKER_NAME,
+        lambda: synthetic_stop_worker_loop(
+            exchange_adapter=exchange_adapter,
+            session_factory=session_factory,
+            stop_event=stop_event,
+        ),
+    )
+    outbox_task = supervisor.start_worker(
+        OUTBOX_PUBLISHER_WORKER_NAME,
+        lambda: outbox_publisher_worker_loop(
+            session_factory=session_factory,
+            stop_event=stop_event,
+        ),
+    )
+    app.state.background_tasks.extend([approval_task, stop_task, outbox_task])
+
+    # 13. Mark service ready
     app.state.service_ready = True
 
     logger.info(
@@ -79,19 +158,27 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         redis_ok=redis_ok,
         paper_trading=settings.PAPER_TRADING,
         live_trading=settings.LIVE_TRADING,
+        recovered_stops_count=app.state.recovered_stops_count,
+        supervised_workers=list(supervisor._tasks.keys()),
     )
 
     try:
         yield
     finally:
+        # 1. Stop accepting new work
         app.state.service_ready = False
+        # 2. Cancel worker tasks & 3. Await graceful completion
+        stop_event.set()
+        await supervisor.stop_all()
         tasks: list[asyncio.Task[object]] = getattr(app.state, "background_tasks", [])
         for task in tasks:
-            task.cancel()
+            if not task.done():
+                task.cancel()
         if tasks:
             await asyncio.gather(*tasks, return_exceptions=True)
         tasks.clear()
 
+        # 5. Close Redis connection & 6. Dispose database engine
         await redis_client.close()
         await dispose_db()
         logger.info("application_stopped")

@@ -31,6 +31,7 @@ from app.db.models.system_state import SystemState
 from app.db.session import dispose_db, get_session_factory, init_db
 from app.integrations.exchange.fake import FakeExchangeAdapter
 from app.kill_switch_service import create_kill_switch_app, kill_switch_lifespan
+from app.main import create_app
 from app.services.kill_switch import KILL_SWITCH_STATE_KEY, KillSwitchService
 from app.services.risk_engine import RISK_ENGINE_HEARTBEAT_STATE_KEY, RiskEngine
 from app.services.synthetic_stop import SyntheticStopService
@@ -175,7 +176,7 @@ async def test_chaos_risk_engine_heartbeat_timeout_triggers_kill_switch(
         await risk_engine.record_heartbeat(session, now=t0)
         await session.commit()
 
-    # Independent Kill Switch Service checks heartbeat and activates Kill Switch (>60s stale)
+    # Internal Kill Switch Service checks heartbeat in PostgreSQL and activates Kill Switch (>60s)
     ks_app = create_kill_switch_app()
     transport = ASGITransport(app=ks_app)
     async with AsyncClient(transport=transport, base_url="http://testserver") as client:
@@ -183,6 +184,14 @@ async def test_chaos_risk_engine_heartbeat_timeout_triggers_kill_switch(
         assert health_resp.status_code == 200
         ready_resp = await client.get("/readyz")
         assert ready_resp.status_code == 200
+
+        # Internal kill_switch (:8001) does NOT expose public /api/v1/system/emergency-stop
+        not_exposed_resp = await client.post(
+            "/api/v1/system/emergency-stop",
+            headers=admin_headers,
+            json={"reason": "Should not be exposed on internal kill_switch service"},
+        )
+        assert not_exposed_resp.status_code == 404
 
         resp = await client.post(
             "/api/v1/kill-switch/heartbeat-check",
@@ -193,7 +202,19 @@ async def test_chaos_risk_engine_heartbeat_timeout_triggers_kill_switch(
         assert body["triggered"] is True
         assert body["activation"]["is_active"] is True
 
-        state_resp = await client.get(
+        internal_state_resp = await client.get(
+            "/internal/kill-switch/state",
+            headers=admin_headers,
+        )
+        assert internal_state_resp.status_code == 200
+        assert internal_state_resp.json()["is_active"] is True
+        assert "heartbeat" in str(internal_state_resp.json()["activation_reason"] or "").lower()
+
+    # Verify mvp0_api (port 8000) also sees the active Kill Switch state in PostgreSQL
+    api_app = create_app()
+    api_transport = ASGITransport(app=api_app)
+    async with AsyncClient(transport=api_transport, base_url="http://testserver") as api_client:
+        state_resp = await api_client.get(
             "/api/v1/system/emergency-stop",
             headers=admin_headers,
         )
@@ -209,30 +230,50 @@ async def test_chaos_kill_switch_service_restart_preserves_state(
     migrated_db: None,
     admin_headers: dict[str, str],
 ) -> None:
-    """Chaos 3: Restarting independent Kill Switch Service preserves state & 24h resume request."""
+    """Chaos 3: mvp0_api writes Kill Switch state; internal kill_switch reads it across restarts."""
     init_db()
+    api_app = create_app()
     ks_app_1 = create_kill_switch_app()
 
+    # 1. mvp0_api (port 8000) serves POST /api/v1/system/emergency-stop and writes to PostgreSQL
+    api_transport = ASGITransport(app=api_app)
+    async with AsyncClient(transport=api_transport, base_url="http://testserver") as api_client:
+        act_resp = await api_client.post(
+            "/api/v1/system/emergency-stop",
+            headers=admin_headers,
+            json={"reason": "Chaos test Kill Switch activation via mvp0_api before restart"},
+        )
+        assert act_resp.status_code == 200
+        assert act_resp.json()["is_active"] is True
+
+        req_resp = await api_client.post(
+            "/api/v1/system/emergency-stop/resume-requests",
+            headers=admin_headers,
+            json={"reason": "Resume request created via mvp0_api before Kill Switch restart"},
+        )
+        assert req_resp.status_code == 200
+        request_id = req_resp.json()["id"]
+
+    # 2. Internal kill_switch (:8001) reads state & heartbeat from PostgreSQL before restart
     async with kill_switch_lifespan(ks_app_1):
         transport_1 = ASGITransport(app=ks_app_1)
         async with AsyncClient(transport=transport_1, base_url="http://testserver") as client_1:
-            act_resp = await client_1.post(
+            # Confirm public emergency-stop endpoint is NOT exposed on kill_switch (:8001)
+            pub_resp = await client_1.get(
                 "/api/v1/system/emergency-stop",
                 headers=admin_headers,
-                json={"reason": "Chaos test Kill Switch activation before container restart"},
             )
-            assert act_resp.status_code == 200
-            assert act_resp.json()["is_active"] is True
+            assert pub_resp.status_code == 404
 
-            req_resp = await client_1.post(
-                "/api/v1/system/emergency-stop/resume-requests",
+            state_before = await client_1.get(
+                "/internal/kill-switch/state",
                 headers=admin_headers,
-                json={"reason": "Resume request created before Kill Switch restart"},
             )
-            assert req_resp.status_code == 200
-            request_id = req_resp.json()["id"]
+            assert state_before.status_code == 200
+            assert state_before.json()["is_active"] is True
+            assert state_before.json()["last_heartbeat_at"] is not None
 
-    # Simulate container restart by creating a brand-new Kill Switch app instance
+    # 3. Simulate container restart by creating a brand-new Kill Switch app instance
     ks_app_2 = create_kill_switch_app()
     async with kill_switch_lifespan(ks_app_2):
         transport_2 = ASGITransport(app=ks_app_2)
@@ -244,20 +285,22 @@ async def test_chaos_kill_switch_service_restart_preserves_state(
             assert ready_resp.status_code == 200
 
             state_after = await client_2.get(
-                "/api/v1/system/emergency-stop",
+                "/internal/kill-switch/state",
                 headers=admin_headers,
             )
             assert state_after.status_code == 200
             assert state_after.json()["is_active"] is True
+            assert state_after.json()["last_heartbeat_at"] is not None
 
-            resume_after = await client_2.get(
-                f"/api/v1/system/emergency-stop/resume-requests/{request_id}",
-                headers=admin_headers,
-            )
-            assert resume_after.status_code == 200
-            assert (
-                resume_after.json()["status"] == ApprovalRequestStatus.PENDING_FIRST_APPROVAL.value
-            )
+    # 4. Verify 24h resume request state remains durable via mvp0_api (:8000)
+    init_db()
+    async with AsyncClient(transport=api_transport, base_url="http://testserver") as api_client:
+        resume_after = await api_client.get(
+            f"/api/v1/system/emergency-stop/resume-requests/{request_id}",
+            headers=admin_headers,
+        )
+        assert resume_after.status_code == 200
+        assert resume_after.json()["status"] == ApprovalRequestStatus.PENDING_FIRST_APPROVAL.value
 
     await dispose_db()
 

@@ -1,8 +1,15 @@
-"""Standalone independent Kill Switch Service entrypoint for MVP-0 (F2 Requirements #1 & #2).
+"""Standalone internal Kill Switch Service entrypoint for MVP-0 (F2 Requirements #1 & #2).
 
-Runs in a dedicated container decoupled from the API / Risk Engine container,
-monitoring Risk Engine heartbeats in PostgreSQL and activating the Kill Switch
-if no heartbeat is observed within RISK_ENGINE_HEARTBEAT_TIMEOUT_SECONDS (60s).
+Routing & Architecture Contract:
+- Public `POST /api/v1/system/emergency-stop` (and related `/api/v1/system/emergency-stop*`
+  endpoints) are served exclusively by `mvp0_api` (`app.main:app`) on port 8000, which writes
+  Kill Switch state into PostgreSQL (`system_state` table, `state_key='KILL_SWITCH'`).
+- This `kill_switch` service runs on internal container port 8001 (`expose: ["8001"]`, no host
+  port binding) and does NOT expose the public `/api/v1/system/emergency-stop` route.
+- This `kill_switch` service reads the Kill Switch state (`KILL_SWITCH`) and Risk Engine
+  heartbeat (`RISK_ENGINE_HEARTBEAT`) from PostgreSQL, and automatically activates the Kill
+  Switch in PostgreSQL if the Risk Engine heartbeat is missing or older than
+  `RISK_ENGINE_HEARTBEAT_TIMEOUT_SECONDS` (60s).
 """
 
 import asyncio
@@ -16,7 +23,6 @@ from typing import Annotated
 from fastapi import Depends, FastAPI, Request
 from fastapi.responses import JSONResponse
 
-from app.api.v1 import system as system_router
 from app.core.config import get_settings
 from app.core.enums import ApiRole
 from app.core.errors import get_request_id, register_exception_handlers
@@ -35,10 +41,38 @@ from app.services.kill_switch import KillSwitchService
 from app.services.risk_engine import RiskEngine
 
 
+async def read_kill_switch_and_heartbeat_from_db() -> dict[str, object]:
+    """Read current Kill Switch state and Risk Engine heartbeat from PostgreSQL."""
+    factory = get_session_factory()
+    ks = KillSwitchService()
+    risk_engine = RiskEngine()
+    async with factory() as session:
+        state = await ks.get_or_create_state(session)
+        last_hb = await risk_engine.get_last_heartbeat(session)
+        await session.commit()
+        return {
+            "is_active": state.is_active,
+            "activation_reason": state.activation_reason,
+            "activated_by": state.activated_by,
+            "activated_at": (
+                state.activated_at.astimezone(UTC).isoformat().replace("+00:00", "Z")
+                if state.activated_at is not None
+                else None
+            ),
+            "resume_status": state.resume_status,
+            "exposure_multiplier": str(state.exposure_multiplier),
+            "last_heartbeat_at": (
+                last_hb.astimezone(UTC).isoformat().replace("+00:00", "Z")
+                if last_hb is not None
+                else None
+            ),
+        }
+
+
 async def run_heartbeat_monitor_once(
     *, now: datetime | None = None
 ) -> EmergencyStopActivateResponse | None:
-    """Perform one Risk Engine heartbeat evaluation and activate Kill Switch if stale (>60s)."""
+    """Read Risk Engine heartbeat from PostgreSQL and activate Kill Switch if stale (>60s)."""
     settings = get_settings()
     factory = get_session_factory()
     ks = KillSwitchService()
@@ -82,7 +116,7 @@ async def _heartbeat_monitor_loop(
 
 @asynccontextmanager
 async def kill_switch_lifespan(app: FastAPI) -> AsyncIterator[None]:
-    """Lifespan manager for the standalone Kill Switch Service container."""
+    """Lifespan manager for the standalone internal Kill Switch Service container."""
     settings = get_settings()
     configure_logging(
         log_level=settings.LOG_LEVEL,
@@ -95,20 +129,17 @@ async def kill_switch_lifespan(app: FastAPI) -> AsyncIterator[None]:
     redis_client = RedisClient(settings.redis_url)
     app.state.redis_client = redis_client
 
-    # Ensure initial persistent KILL_SWITCH state and initial heartbeat baseline exist
+    # Read initial persistent KILL_SWITCH state and heartbeat baseline from PostgreSQL
     try:
-        factory = get_session_factory()
-        async with factory() as session:
-            ks = KillSwitchService()
-            await ks.get_or_create_state(session, for_update=True)
-            risk_engine = RiskEngine()
-            last_hb = await risk_engine.get_last_heartbeat(session)
-            if last_hb is None:
-                await risk_engine.record_heartbeat(
+        snapshot = await read_kill_switch_and_heartbeat_from_db()
+        if snapshot["last_heartbeat_at"] is None:
+            factory = get_session_factory()
+            async with factory() as session:
+                await RiskEngine().record_heartbeat(
                     session,
                     metadata={"source": "kill_switch_service_boot_baseline"},
                 )
-            await session.commit()
+                await session.commit()
     except Exception as exc:
         logger.warning("kill_switch_startup_db_seed_skipped", error=str(exc))
 
@@ -121,6 +152,7 @@ async def kill_switch_lifespan(app: FastAPI) -> AsyncIterator[None]:
     logger.info(
         "kill_switch_service_started",
         heartbeat_timeout_seconds=settings.RISK_ENGINE_HEARTBEAT_TIMEOUT_SECONDS,
+        internal_port=8001,
     )
     try:
         yield
@@ -136,12 +168,16 @@ async def kill_switch_lifespan(app: FastAPI) -> AsyncIterator[None]:
 
 
 def create_kill_switch_app() -> FastAPI:
-    """Create the standalone Kill Switch FastAPI application."""
+    """Create the standalone internal Kill Switch FastAPI application (port 8001).
+
+    Does NOT mount `/api/v1/system/emergency-stop` (which is served exclusively by
+    `mvp0_api` on port 8000).
+    """
     settings = get_settings()
     application = FastAPI(
-        title="MVP-0 Independent Kill Switch Service",
+        title="MVP-0 Internal Kill Switch Watchdog Service",
         version="0.1.0",
-        docs_url=None if settings.ENVIRONMENT == "production" else "/docs",
+        docs_url=None,
         redoc_url=None,
         lifespan=kill_switch_lifespan,
     )
@@ -151,7 +187,7 @@ def create_kill_switch_app() -> FastAPI:
 
     @application.get("/healthz", response_model=HealthzResponse, tags=["health"])
     async def healthz(request: Request) -> HealthzResponse:
-        """Liveness probe for the independent Kill Switch Service."""
+        """Internal liveness probe for the Kill Switch Service container."""
         now_iso = datetime.now(UTC).isoformat().replace("+00:00", "Z")
         return HealthzResponse(
             status="ok",
@@ -161,7 +197,7 @@ def create_kill_switch_app() -> FastAPI:
 
     @application.get("/readyz", response_model=ReadyzResponse, tags=["health"])
     async def readyz(request: Request) -> JSONResponse:
-        """Readiness probe verifying PostgreSQL connectivity for the Kill Switch Service."""
+        """Internal readiness probe verifying PostgreSQL connectivity for Kill Switch Service."""
         db_ok = await ping_database()
         migrations_ok = await check_migrations_current() if db_ok else False
         redis_client: RedisClient = getattr(
@@ -182,23 +218,37 @@ def create_kill_switch_app() -> FastAPI:
         )
         return JSONResponse(status_code=200 if is_ready else 503, content=payload.model_dump())
 
+    @application.get(
+        "/internal/kill-switch/state",
+        tags=["kill-switch-internal"],
+    )
+    async def get_internal_state_endpoint(
+        request: Request,
+        _role: Annotated[ApiRole, Depends(require_admin_role)],
+    ) -> dict[str, object]:
+        """Internal endpoint reading Kill Switch state and Risk Engine heartbeat from PostgreSQL."""
+        snapshot = await read_kill_switch_and_heartbeat_from_db()
+        snapshot["request_id"] = get_request_id(request)
+        return snapshot
+
     @application.post(
         "/api/v1/kill-switch/heartbeat-check",
-        tags=["kill-switch"],
+        tags=["kill-switch-internal"],
     )
     async def check_heartbeat_endpoint(
         request: Request,
         _role: Annotated[ApiRole, Depends(require_admin_role)],
     ) -> dict[str, object]:
-        """On-demand endpoint to check Risk Engine heartbeat and trigger Kill Switch if stale."""
+        """Internal endpoint checking Risk Engine heartbeat in DB and activating if stale."""
         activation = await run_heartbeat_monitor_once()
+        snapshot = await read_kill_switch_and_heartbeat_from_db()
         return {
             "triggered": activation is not None,
             "activation": activation.model_dump() if activation is not None else None,
+            "state": snapshot,
             "request_id": get_request_id(request),
         }
 
-    application.include_router(system_router.router, prefix="/api/v1", tags=["system"])
     return application
 
 

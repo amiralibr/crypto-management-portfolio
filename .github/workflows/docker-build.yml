@@ -44,9 +44,10 @@ jobs:
           docker compose up -d postgres redis api kill_switch
           READY=0
           for i in $(seq 1 30); do
-            if curl -fsS http://127.0.0.1:8000/readyz && curl -fsS http://127.0.0.1:8001/readyz; then
+            if curl -fsS http://127.0.0.1:8000/readyz && \
+               docker compose exec -T kill_switch python3 -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8001/readyz', timeout=3)"; then
               echo ""
-              echo "Development API and Independent Kill Switch Service ready!"
+              echo "Development API (:8000) and Internal Kill Switch Service (:8001) ready!"
               READY=1
               break
             fi
@@ -59,8 +60,13 @@ jobs:
           fi
           curl -fsS http://127.0.0.1:8000/healthz
           curl -fsS http://127.0.0.1:8000/readyz
-          curl -fsS http://127.0.0.1:8001/healthz
-          curl -fsS http://127.0.0.1:8001/readyz
+          docker compose exec -T kill_switch python3 -c "import urllib.request; print(urllib.request.urlopen('http://127.0.0.1:8001/healthz', timeout=3).read().decode())"
+          docker compose exec -T kill_switch python3 -c "import urllib.request; print(urllib.request.urlopen('http://127.0.0.1:8001/readyz', timeout=3).read().decode())"
+          # Verify kill_switch does NOT publish host port 8001 and does NOT expose /api/v1/system/emergency-stop
+          KS_PORTS=$(docker inspect --format='{{json .HostConfig.PortBindings}}' $(docker compose ps -q kill_switch))
+          echo "kill_switch HostConfig.PortBindings: $KS_PORTS"
+          test "$KS_PORTS" = "{}" -o "$KS_PORTS" = "null"
+          docker compose exec -T kill_switch python3 -c 'import urllib.request, urllib.error; exec("try:\n urllib.request.urlopen(\"http://127.0.0.1:8001/api/v1/system/emergency-stop\", timeout=3)\n raise SystemExit(1)\nexcept urllib.error.HTTPError as e:\n assert e.code == 404, e.code\n print(\"Verified 404 on internal kill_switch /api/v1/system/emergency-stop\")")'
           curl -fsS http://127.0.0.1:8000/metrics | head -n 30
           docker compose ps
           docker compose logs api kill_switch

@@ -24,17 +24,33 @@ from app.integrations.exchange.errors import ExchangeError
 from app.integrations.exchange.fake import FakeExchangeAdapter
 from app.integrations.exchange.paper import PaperTradingAdapter
 from app.integrations.notifications.telegram import PaperTelegramNotificationAdapter
+from app.main import create_app, lifespan
 from app.services.outbox import OutboxService
 from app.services.reconciliation import ReconciliationService
-from app.workers.approval_timeout import run_approval_timeout_step
-from app.workers.outbox_publisher import run_outbox_publisher_step
+from app.workers.approval_timeout import (
+    WORKER_NAME as APPROVAL_TIMEOUT_WORKER_NAME,
+)
+from app.workers.approval_timeout import (
+    run_approval_timeout_step,
+)
+from app.workers.outbox_publisher import (
+    WORKER_NAME as OUTBOX_PUBLISHER_WORKER_NAME,
+)
+from app.workers.outbox_publisher import (
+    run_outbox_publisher_step,
+)
 from app.workers.supervisor import WorkerSupervisor
-from app.workers.synthetic_stop import run_synthetic_stop_step
+from app.workers.synthetic_stop import (
+    WORKER_NAME as SYNTHETIC_STOP_WORKER_NAME,
+)
+from app.workers.synthetic_stop import (
+    run_synthetic_stop_step,
+)
 from app.workers.watchdog import check_system_watchdog
 
 
 @pytest.mark.asyncio
-async def test_outbox_delivery_retry_dead_letter_and_replay() -> None:
+async def test_outbox_delivery_retry_dead_letter_and_replay(migrated_db: None) -> None:
     """Verify Outbox enqueue, retry backoff, Dead-Letter creation, and Admin replay (§19)."""
     notifier = PaperTelegramNotificationAdapter()
     service = OutboxService(notifier=notifier)
@@ -270,7 +286,7 @@ async def test_paper_trading_adapter_and_registry_constraints() -> None:
 
 
 @pytest.mark.asyncio
-async def test_workers_and_supervisor_crash_fail_closed() -> None:
+async def test_workers_and_supervisor_crash_fail_closed(migrated_db: None) -> None:
     """Verify worker steps, watchdog, and supervisor fail-closed crash handling (v4.3 §1.4)."""
     fake_exchange = FakeExchangeAdapter()
     notifier = PaperTelegramNotificationAdapter()
@@ -444,3 +460,28 @@ async def test_dead_letter_admin_only_replay_via_api(
     assert body["dead_letter_id"] == dlq_id
     assert body["resolution_status"] == DeadLetterResolutionStatus.REPLAYED.value
     assert body["replayed_outbox_status"] == OutboxStatus.PENDING.value
+
+
+@pytest.mark.asyncio
+async def test_main_lifespan_starts_supervisor_recovers_stops_and_reconciles_positions(
+    migrated_db: None,
+) -> None:
+    """Verify app/main.py:lifespan recovers stops, reconciles positions, and starts supervisor."""
+    app_instance = create_app()
+    async with lifespan(app_instance):
+        assert app_instance.state.service_ready is True
+        supervisor: WorkerSupervisor = app_instance.state.worker_supervisor
+        assert isinstance(supervisor, WorkerSupervisor)
+        assert app_instance.state.reconciliation_report is not None
+        assert isinstance(app_instance.state.recovered_stops_count, int)
+
+        for worker_name in (
+            APPROVAL_TIMEOUT_WORKER_NAME,
+            SYNTHETIC_STOP_WORKER_NAME,
+            OUTBOX_PUBLISHER_WORKER_NAME,
+        ):
+            assert worker_name in supervisor._tasks
+            assert not supervisor._tasks[worker_name].done()
+
+    assert app_instance.state.service_ready is False
+    assert len(app_instance.state.worker_supervisor._tasks) == 0
