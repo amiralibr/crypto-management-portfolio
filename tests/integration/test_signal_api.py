@@ -6,8 +6,10 @@ from decimal import Decimal
 
 import pytest
 from httpx import AsyncClient
+from sqlalchemy import func, select
 
 from app.core.enums import SignalApprovalStatus
+from app.db.models.order import Order
 from app.db.session import dispose_db, get_session_factory, init_db
 from app.services.signal_engine import SignalEngine
 
@@ -169,7 +171,7 @@ async def test_operational_key_cannot_access_admin_routes(
 
 
 @pytest.mark.asyncio
-async def test_approve_signal_is_idempotent(
+async def test_order_idempotency_across_duplicate_requests(
     migrated_db: None,
     async_client: AsyncClient,
     operational_headers: dict[str, str],
@@ -200,6 +202,14 @@ async def test_approve_signal_is_idempotent(
     body2 = resp2.json()
     assert body2["approval_status"] == SignalApprovalStatus.APPROVED.value
     assert body2["order"]["order_id"] == order_id_1
+
+    factory = get_session_factory()
+    async with factory() as session:
+        order_count = await session.scalar(
+            select(func.count()).select_from(Order).where(Order.signal_id == sig_uuid)
+        )
+        assert order_count == 1
+    await dispose_db()
 
 
 @pytest.mark.asyncio

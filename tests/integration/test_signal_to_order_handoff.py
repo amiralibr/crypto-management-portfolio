@@ -5,7 +5,7 @@ from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 
 import pytest
-from sqlalchemy import select
+from sqlalchemy import func, select
 
 from app.core.enums import (
     OrderState,
@@ -127,6 +127,76 @@ async def test_risk_approved_signal_creates_submitted_order(migrated_db: None) -
             )
         )
         assert outbox is not None
+    await dispose_db()
+
+
+@pytest.mark.asyncio
+async def test_outbox_event_created_in_same_transaction(migrated_db: None) -> None:
+    """Verify approval, Order, and Outbox commit or roll back as one transaction."""
+    signal_id = await _seed_signal()
+    init_db()
+    factory = get_session_factory()
+    lifecycle = SignalLifecycleService()
+
+    async with factory() as session:
+        outcome = await lifecycle.approve_signal(
+            session,
+            signal_id=signal_id,
+            reason="Verify transactional Order and Outbox creation",
+            idempotency_key=f"same-transaction-{uuid.uuid4()}",
+        )
+        assert outcome.order is not None
+        order_id = outcome.order.id
+
+        order_event = await session.scalar(
+            select(OutboxEvent).where(
+                OutboxEvent.event_type == OutboxEventType.ORDER_CREATED.value,
+                OutboxEvent.aggregate_id == order_id,
+            )
+        )
+        approval_event = await session.scalar(
+            select(OutboxEvent).where(
+                OutboxEvent.event_type == OutboxEventType.SIGNAL_APPROVED.value,
+                OutboxEvent.aggregate_id == signal_id,
+            )
+        )
+        assert order_event is not None
+        assert approval_event is not None
+        assert order_event.status == OutboxStatus.PENDING.value
+        await session.rollback()
+
+    async with factory() as observer:
+        persisted_signal = await observer.scalar(select(Signal).where(Signal.id == signal_id))
+        assert persisted_signal is not None
+        assert persisted_signal.approval_status == SignalApprovalStatus.PENDING_APPROVAL.value
+        assert (
+            await observer.scalar(
+                select(func.count()).select_from(Order).where(Order.signal_id == signal_id)
+            )
+            == 0
+        )
+        assert (
+            await observer.scalar(
+                select(func.count())
+                .select_from(OutboxEvent)
+                .where(
+                    OutboxEvent.event_type == OutboxEventType.SIGNAL_APPROVED.value,
+                    OutboxEvent.aggregate_id == signal_id,
+                )
+            )
+            == 0
+        )
+        assert (
+            await observer.scalar(
+                select(func.count())
+                .select_from(OutboxEvent)
+                .where(
+                    OutboxEvent.event_type == OutboxEventType.ORDER_CREATED.value,
+                    OutboxEvent.aggregate_id == order_id,
+                )
+            )
+            == 0
+        )
     await dispose_db()
 
 

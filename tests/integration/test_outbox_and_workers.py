@@ -16,6 +16,8 @@ from app.core.enums import (
     OutboxStatus,
 )
 from app.core.errors import ForbiddenError
+from app.core.metrics import OUTBOX_DEAD_LETTER_EVENTS_TOTAL
+from app.db.models.audit_log import AuditLog
 from app.db.models.dead_letter_event import DeadLetterEvent
 from app.db.models.outbox_event import OutboxEvent
 from app.db.session import dispose_db, get_session_factory, init_db
@@ -252,6 +254,54 @@ async def test_outbox_delivery_retry_dead_letter_and_replay(migrated_db: None) -
 
 
 @pytest.mark.asyncio
+async def test_dead_letter_metric_is_incremented(migrated_db: None) -> None:
+    """Assert the Dead-Letter counter increments when a target event exhausts retries."""
+    service = OutboxService()
+    factory = get_session_factory()
+    event_id: uuid.UUID | None = None
+    now = datetime.now(UTC)
+    counter = OUTBOX_DEAD_LETTER_EVENTS_TOTAL.labels(
+        failure_class=DeadLetterFailureClass.CONSUMER.value
+    )
+    counter_before = counter._value.get()
+
+    async def fail_target_event(event: OutboxEvent) -> None:
+        if event.id == event_id:
+            raise RuntimeError("Injected consumer failure for metric assertion")
+
+    async with factory() as session:
+        event = await service.enqueue_event(
+            session,
+            event_type=OutboxEventType.ORDER_CREATED.value,
+            aggregate_type="ORDER",
+            aggregate_id=uuid.uuid4(),
+            payload={"metric_assertion": "dead-letter-counter"},
+        )
+        event_id = event.id
+        await session.commit()
+
+        for attempt in range(5):
+            await service.process_pending_events(
+                session,
+                handler=fail_target_event,
+                now=now + timedelta(minutes=10 * attempt),
+                batch_size=1000,
+                failure_class=DeadLetterFailureClass.CONSUMER,
+            )
+            await session.commit()
+
+        dead_letter = await session.scalar(
+            select(DeadLetterEvent).where(DeadLetterEvent.original_outbox_event_id == event_id)
+        )
+        assert dead_letter is not None
+        assert dead_letter.retry_count == 5
+        assert dead_letter.resolution_status == DeadLetterResolutionStatus.OPEN.value
+
+    assert counter._value.get() == counter_before + 1
+    await dispose_db()
+
+
+@pytest.mark.asyncio
 async def test_paper_trading_adapter_and_registry_constraints() -> None:
     """Verify PaperTradingAdapter and ExchangeAdapterRegistry forbid non-Paper adapters (§7.1)."""
     paper = PaperTradingAdapter()
@@ -437,7 +487,7 @@ async def test_dead_letter_admin_only_replay_via_api(
         )
         await session.commit()
         assert dlq is not None
-        dlq_id = str(dlq.id)
+        dlq_id = dlq.id
 
     await dispose_db()
 
@@ -457,9 +507,25 @@ async def test_dead_letter_admin_only_replay_via_api(
     )
     assert adm_resp.status_code == 200
     body = adm_resp.json()
-    assert body["dead_letter_id"] == dlq_id
+    assert body["dead_letter_id"] == str(dlq_id)
     assert body["resolution_status"] == DeadLetterResolutionStatus.REPLAYED.value
     assert body["replayed_outbox_status"] == OutboxStatus.PENDING.value
+
+    factory = get_session_factory()
+    async with factory() as session:
+        replay_audit = await session.scalar(
+            select(AuditLog).where(
+                AuditLog.action == "DEAD_LETTER_EVENT_REPLAYED",
+                AuditLog.target_type == "DEAD_LETTER_EVENT",
+                AuditLog.target_id == dlq_id,
+            )
+        )
+        assert replay_audit is not None
+        assert replay_audit.action == "DEAD_LETTER_EVENT_REPLAYED"
+        assert replay_audit.actor_role == ApiRole.ADMIN.value
+        assert replay_audit.target_id == dlq_id
+        assert replay_audit.detail_json is not None
+        assert replay_audit.detail_json["replayed_outbox_event_id"]
 
 
 @pytest.mark.asyncio
