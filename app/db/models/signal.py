@@ -12,11 +12,14 @@ from sqlalchemy import (
     Integer,
     Numeric,
     String,
+    event,
     func,
+    inspect,
 )
 from sqlalchemy.dialects.postgresql import JSONB, UUID
-from sqlalchemy.orm import Mapped, mapped_column
+from sqlalchemy.orm import LoaderCallableStatus, Mapped, mapped_column
 
+from app.core.errors import SignalReferencePriceImmutableError
 from app.db.models.exchange_account import Base
 
 
@@ -73,3 +76,42 @@ class Signal(Base):
         onupdate=func.now(),
     )
     version: Mapped[int] = mapped_column(Integer, nullable=False, default=1, server_default="1")
+
+
+@event.listens_for(Signal.reference_price, "set")
+def _prevent_reference_price_mutation(
+    target: Signal,
+    value: Decimal,
+    oldvalue: object,
+    _initiator: object,
+) -> None:
+    """Reject any in-memory mutation of Signal.reference_price once initialized (§4.5 & §7.2)."""
+    if oldvalue in (None, LoaderCallableStatus.NO_VALUE, LoaderCallableStatus.NEVER_SET):
+        return
+    if isinstance(oldvalue, Decimal) and Decimal(str(value)) != oldvalue:
+        raise SignalReferencePriceImmutableError(
+            f"Signal reference_price ({oldvalue}) is immutable and cannot be changed to {value}",
+            details={
+                "signal_id": getattr(target, "signal_id", None),
+                "original_reference_price": str(oldvalue),
+                "attempted_reference_price": str(value),
+            },
+        )
+
+
+@event.listens_for(Signal, "before_update")
+def _prevent_reference_price_db_update(
+    _mapper: object,
+    _connection: object,
+    target: Signal,
+) -> None:
+    """Reject any ORM flush that attempts to modify Signal.reference_price."""
+    state = inspect(target)
+    hist = state.attrs.reference_price.history
+    if hist.has_changes() and hist.deleted:
+        old_val = hist.deleted[0]
+        new_val = hist.added[0] if hist.added else target.reference_price
+        if old_val is not None and Decimal(str(old_val)) != Decimal(str(new_val)):
+            raise SignalReferencePriceImmutableError(
+                "Signal reference_price is immutable and cannot be updated in PostgreSQL"
+            )

@@ -51,9 +51,9 @@ def test_paper_services_only_attach_to_paper_network() -> None:
 
     for service_name, service_cfg in services.items():
         attached_networks = service_cfg.get("networks", [])
-        assert attached_networks == [
-            "paper_network"
-        ], f"Service {service_name} attached to non-paper networks: {attached_networks}"
+        assert attached_networks == ["paper_network"], (
+            f"Service {service_name} attached to non-paper networks: {attached_networks}"
+        )
 
 
 def test_paper_environment_has_no_live_exchange_endpoint() -> None:
@@ -127,7 +127,7 @@ def test_paper_api_has_no_outbound_internet_access() -> None:
     assert networks["paper_network"].get("internal") is True
 
     for service_name, service_cfg in paper_compose["services"].items():
-        assert (
-            "ports" not in service_cfg
-        ), f"Paper service {service_name} must not publish host ports"
+        assert "ports" not in service_cfg, (
+            f"Paper service {service_name} must not publish host ports"
+        )
         assert service_cfg.get("network_mode") != "host"

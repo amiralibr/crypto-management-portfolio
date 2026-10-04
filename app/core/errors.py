@@ -89,6 +89,18 @@ class NotFoundError(AppError):
         )
 
 
+class SignalNotFoundError(NotFoundError):
+    """Raised when a requested Signal does not exist (HTTP 404, SIGNAL_NOT_FOUND)."""
+
+    def __init__(
+        self,
+        message: str = "Signal not found",
+        details: dict[str, Any] | None = None,
+    ) -> None:
+        super().__init__(message=message, details=details)
+        self.code = "SIGNAL_NOT_FOUND"
+
+
 class InvalidStateError(AppError):
     """Raised when a state machine or approval transition is invalid (HTTP 409)."""
 
@@ -105,6 +117,42 @@ class InvalidStateError(AppError):
         )
 
 
+class SignalExpiredError(InvalidStateError):
+    """Raised when attempting to approve a time-expired signal (HTTP 409, SIGNAL_EXPIRED)."""
+
+    def __init__(
+        self,
+        message: str = "Signal has expired and cannot be approved",
+        details: dict[str, Any] | None = None,
+    ) -> None:
+        super().__init__(message=message, details=details)
+        self.code = "SIGNAL_EXPIRED"
+
+
+class PriceDriftExpiredError(InvalidStateError):
+    """Raised when attempting to approve a drift-expired signal (HTTP 409, PRICE_DRIFT_EXPIRED)."""
+
+    def __init__(
+        self,
+        message: str = "Signal expired due to price drift and cannot be approved",
+        details: dict[str, Any] | None = None,
+    ) -> None:
+        super().__init__(message=message, details=details)
+        self.code = "PRICE_DRIFT_EXPIRED"
+
+
+class SignalReferencePriceImmutableError(InvalidStateError, ValueError):
+    """Raised when attempting to mutate an existing Signal's immutable reference_price."""
+
+    def __init__(
+        self,
+        message: str = "Signal reference_price is immutable and cannot be modified",
+        details: dict[str, Any] | None = None,
+    ) -> None:
+        InvalidStateError.__init__(self, message=message, details=details)
+        ValueError.__init__(self, message)
+
+
 class ConflictError(AppError):
     """Raised on concurrency or business state conflicts (HTTP 409)."""
 
@@ -118,6 +166,21 @@ class ConflictError(AppError):
             code=code,
             message=message,
             status_code=409,
+            details=details,
+        )
+
+
+class IdempotencyConflictError(ConflictError):
+    """Raised when an Idempotency-Key is reused with a differing request payload (HTTP 409)."""
+
+    def __init__(
+        self,
+        message: str = "Idempotency-Key already used with a different request payload",
+        details: dict[str, Any] | None = None,
+    ) -> None:
+        super().__init__(
+            message=message,
+            code="IDEMPOTENCY_CONFLICT",
             details=details,
         )
 

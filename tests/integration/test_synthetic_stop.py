@@ -400,3 +400,10 @@ async def test_stop_reconciliation_after_restart() -> None:
         with pytest.raises(NotFoundError):
             await service.evaluate_and_execute_stop(session, stop_id=uuid.uuid4())
     await dispose_db()
+
+
+@pytest.mark.asyncio
+async def test_synthetic_stop_triggers_only_once(migrated_db: None) -> None:
+    """F2 Regression (§12.6): Verify Synthetic Stop triggers and executes at most once."""
+    _ = migrated_db
+    await test_stop_triggers_only_once()

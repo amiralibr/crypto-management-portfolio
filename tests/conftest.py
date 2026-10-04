@@ -190,8 +190,13 @@ def alembic_config() -> Config:
 
 @pytest.fixture
 def migrated_db(alembic_config: Config) -> None:
-    """Ensure database schema is migrated to head."""
+    """Ensure database schema is migrated to head and KILL_SWITCH is inactive."""
+    import psycopg
+
     command.upgrade(alembic_config, "head")
+    sync_url = os.environ["DATABASE_URL"].replace("postgresql+asyncpg://", "postgresql://")
+    with psycopg.connect(sync_url, autocommit=True) as conn:
+        conn.execute("UPDATE system_states SET is_active = FALSE WHERE state_key = 'KILL_SWITCH'")
 
 
 @pytest.fixture

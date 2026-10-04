@@ -84,11 +84,20 @@ jobs:
       - name: Run alembic upgrade head again
         run: poetry run alembic upgrade head
 
-      - name: Run Dead-Letter, Admin-only Replay, E2E (TestSignalFactory), and Chaos tests
+      - name: Run F2 and F3 mandatory unit, integration, E2E, and Chaos suites
         run: |
           poetry run pytest -v \
+            tests/unit/test_signal_engine.py \
+            tests/unit/test_trend_following_rule.py \
+            tests/unit/test_mean_reversion_rule.py \
+            tests/unit/test_approval_timeout.py \
+            tests/integration/test_signal_api.py \
+            tests/integration/test_signal_approval.py \
+            tests/integration/test_signal_to_order_handoff.py \
+            tests/integration/test_decision_log.py \
             tests/integration/test_outbox_and_workers.py \
             tests/e2e/test_signal_lifecycle_e2e.py \
+            tests/e2e/test_signal_approval_order_flow.py \
             tests/chaos/test_f2_chaos.py \
             --no-cov
 
@@ -97,6 +106,9 @@ jobs:
           poetry run pytest --cov=app --cov-branch --cov-report=term-missing --cov-report=xml:coverage.xml --cov-fail-under=80
           poetry run coverage report --include="app/core/*" --fail-under=90
           poetry run coverage report --include="app/db/*" --fail-under=90
+          poetry run coverage report --include="app/services/signal_engine.py,app/services/trend_following_rule.py,app/services/mean_reversion_rule.py" --fail-under=90
+          poetry run coverage report --include="app/services/approval_timeout.py" --fail-under=90
+          poetry run coverage report --include="app/services/signal_lifecycle.py" --fail-under=90
           poetry run coverage report --include="app/services/risk_engine.py" --fail-under=90
           poetry run coverage report --include="app/services/state_machine.py" --fail-under=90
           poetry run coverage report --include="app/services/kill_switch.py" --fail-under=90

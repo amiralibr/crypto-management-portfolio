@@ -561,3 +561,12 @@ async def test_state_transition_creates_audit_record() -> None:
         assert updated_pos4.size == Decimal("0.400000000000")
         await session.commit()
     await dispose_db()
+
+
+@pytest.mark.asyncio
+async def test_protection_failure_retry_schedule_is_0_5_15_seconds(
+    migrated_db: None,
+) -> None:
+    """F2 Regression (§12.6): Verify protection failure retry schedule is 0s, 5s, 15s."""
+    _ = migrated_db
+    await test_protection_failure_retry_schedule()
