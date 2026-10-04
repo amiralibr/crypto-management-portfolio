@@ -86,6 +86,7 @@ jobs:
 
       - name: Run F2 and F3 mandatory unit, integration, E2E, and Chaos suites
         run: |
+          set -o pipefail
           poetry run pytest -v \
             tests/unit/test_signal_engine.py \
             tests/unit/test_trend_following_rule.py \
@@ -99,7 +100,151 @@ jobs:
             tests/e2e/test_signal_lifecycle_e2e.py \
             tests/e2e/test_signal_approval_order_flow.py \
             tests/chaos/test_f2_chaos.py \
-            --no-cov
+            tests/chaos/test_f3_chaos.py \
+            --no-cov \
+            --junitxml=acceptance-test-results.xml \
+            2>&1 | tee acceptance-test.log
+
+      - name: Publish acceptance test results to the job summary
+        if: always()
+        run: |
+          python - <<'PY'
+          import os
+          import re
+          import xml.etree.ElementTree as ET
+          from pathlib import Path
+
+          log_path = Path("acceptance-test.log")
+          xml_path = Path("acceptance-test-results.xml")
+          log_lines = []
+          if log_path.exists():
+              log_lines = log_path.read_text(encoding="utf-8", errors="replace").splitlines()
+          result_lines = [
+              line.strip()
+              for line in log_lines
+              if re.search(r"\b(PASSED|FAILED|ERROR|SKIPPED|XFAIL|XPASS)\b", line)
+          ]
+          report_lines = ["## F2/F3 Acceptance Test Run", ""]
+
+          if xml_path.exists():
+              root = ET.parse(xml_path).getroot()
+              cases = list(root.iter("testcase"))
+              report_lines.append(f"Pytest recorded **{len(cases)} test cases** in CI.")
+              failures = []
+              for case in cases:
+                  failure = case.find("failure")
+                  if failure is None:
+                      failure = case.find("error")
+                  if failure is not None:
+                      detail = failure.get("message", "") + "\n" + (failure.text or "")
+                      failures.append((case.get("classname", ""), case.get("name", ""), detail))
+              if failures:
+                  report_lines.extend(["", "### Failures"])
+                  for classname, name, detail in failures:
+                      excerpt = " ".join(detail.split())[:1800]
+                      report_lines.append(f"- **FAIL** `{classname}::{name}` — `{excerpt}`")
+                      escaped = (
+                          f"{classname}::{name}: {excerpt}"
+                          .replace("%", "%25")
+                          .replace("\r", "%0D")
+                          .replace("\n", "%0A")
+                          .replace(":", "%3A")
+                          .replace(",", "%2C")
+                      )
+                      print(f"::error title=Pytest failure::{escaped}")
+              skipped = sum(case.find("skipped") is not None for case in cases)
+              report_lines.append(f"Skipped test cases: **{skipped}**.")
+          else:
+              report_lines.append("JUnit XML was not produced; inspect the pytest step output.")
+
+          if result_lines:
+              report_lines.extend(["", "### Captured pytest log excerpts", "```text"])
+              report_lines.extend(result_lines)
+              report_lines.append("```")
+              evidence_groups = (
+                  (
+                      "F3-contract-21.5-log-excerpts",
+                      (
+                          "test_signal_to_approval_to_order_flow",
+                          "test_signal_to_approval_to_partial_fill_to_protection",
+                          "test_signal_to_approval_to_synthetic_stop_execution",
+                          "test_approval_rolls_back_when_outbox_insert_fails",
+                          "test_order_idempotency_across_duplicate_requests",
+                          "test_outbox_event_created_in_same_transaction",
+                          "test_outbox_delivery_retry_dead_letter_and_replay",
+                          "test_outbox_dead_letter_after_max_retries",
+                          "test_dead_letter_metric_is_incremented",
+                          "test_dead_letter_admin_only_replay_via_api",
+                          "test_decision_history_is_queryable_by_signal_id",
+                          "test_decision_log_is_read_only",
+                      ),
+                  ),
+                  (
+                      "F3-chaos-21.6-log-excerpts",
+                      (
+                          "test_worker_kill_during_order_processing",
+                          "test_worker_restart_recovers_synthetic_stop",
+                          "test_worker_restart_does_not_duplicate_stop_order",
+                          "test_database_restart_during_outbox_delivery",
+                          "test_database_restart_does_not_lose_committed_order",
+                          "test_database_restart_does_not_lose_dead_letter_event",
+                          "test_redis_restart_does_not_corrupt_kill_switch_state",
+                          "test_kill_switch_activation_during_partial_fill",
+                          "test_kill_switch_activation_during_active_order",
+                          "test_exchange_connector_failure_causes_fail_closed",
+                          "test_stale_market_data_blocks_order_submission",
+                          "test_paper_network_isolation_under_chaos",
+                          "test_no_live_order_is_submitted_in_any_failure_scenario",
+                      ),
+                  ),
+              )
+              missing_markers = []
+              nonpassing_excerpts = []
+              for title, markers in evidence_groups:
+                  excerpts = [line for line in result_lines if any(marker in line for marker in markers)]
+                  missing_markers.extend(
+                      marker
+                      for marker in markers
+                      if not any(marker in line for line in excerpts)
+                  )
+                  nonpassing_excerpts.extend(
+                      line for line in excerpts if not re.search(r"\bPASSED\b", line)
+                  )
+                  if excerpts:
+                      escaped = (
+                          "\n".join(excerpts)
+                          .replace("%", "%25")
+                          .replace("\r", "%0D")
+                          .replace("\n", "%0A")
+                          .replace(":", "%3A")
+                          .replace(",", "%2C")
+                      )
+                      print(f"::notice title={title}::{escaped}")
+              if missing_markers:
+                  missing = ", ".join(missing_markers)
+                  report_lines.extend(["", f"**Missing expected F3 log excerpts:** `{missing}`"])
+                  escaped = missing.replace("%", "%25").replace(":", "%3A").replace(",", "%2C")
+                  print(f"::error title=Missing F3 pytest log excerpts::{escaped}")
+                  raise SystemExit(1)
+              if nonpassing_excerpts:
+                  report_lines.extend(["", "**Required F3 tests did not pass:**"])
+                  report_lines.extend(f"- `{line}`" for line in nonpassing_excerpts)
+                  excerpt = "\n".join(nonpassing_excerpts)
+                  escaped = (
+                      excerpt
+                      .replace("%", "%25")
+                      .replace("\r", "%0D")
+                      .replace("\n", "%0A")
+                      .replace(":", "%3A")
+                      .replace(",", "%2C")
+                  )
+                  print(f"::error title=Required F3 tests did not pass::{escaped}")
+                  raise SystemExit(1)
+
+          summary_path = Path(os.environ["GITHUB_STEP_SUMMARY"])
+          with summary_path.open("a", encoding="utf-8") as summary:
+              summary.write("\n".join(report_lines) + "\n")
+          PY
 
       - name: Run pytest with coverage gates
         run: |
@@ -117,7 +262,56 @@ jobs:
           poetry run coverage report --include="app/services/outbox.py" --fail-under=90
 
       - name: Upload coverage report
+        id: coverage_artifact
         uses: actions/upload-artifact@v4
         with:
           name: coverage-report
           path: coverage.xml
+
+      - name: Publish uploaded coverage artifact metrics
+        if: success()
+        env:
+          COVERAGE_ARTIFACT_URL: ${{ steps.coverage_artifact.outputs.artifact-url }}
+          COVERAGE_ARTIFACT_DIGEST: ${{ steps.coverage_artifact.outputs.artifact-digest }}
+        run: |
+          python - <<'PY'
+          import hashlib
+          import os
+          import xml.etree.ElementTree as ET
+          from decimal import Decimal, ROUND_HALF_UP
+          from pathlib import Path
+
+          coverage_path = Path("coverage.xml")
+          root = ET.parse(coverage_path).getroot()
+
+          def metric(covered_name: str, valid_name: str) -> str:
+              covered = int(root.attrib[covered_name])
+              valid = int(root.attrib[valid_name])
+              if valid == 0:
+                  return f"N/A ({covered}/{valid})"
+              percent = (Decimal(covered) * Decimal(100) / Decimal(valid)).quantize(
+                  Decimal("0.01"), rounding=ROUND_HALF_UP
+              )
+              return f"{percent}% ({covered}/{valid})"
+
+          line_coverage = metric("lines-covered", "lines-valid")
+          branch_coverage = metric("branches-covered", "branches-valid")
+          xml_digest = hashlib.sha256(coverage_path.read_bytes()).hexdigest()
+          artifact_url = os.environ.get("COVERAGE_ARTIFACT_URL", "")
+          artifact_digest = os.environ.get("COVERAGE_ARTIFACT_DIGEST", "")
+          details = (
+              f"Uploaded coverage-report: line coverage {line_coverage}; "
+              f"branch coverage {branch_coverage}; coverage.xml SHA-256 {xml_digest}; "
+              f"artifact digest {artifact_digest or 'unavailable'}; "
+              f"artifact URL {artifact_url or 'unavailable'}"
+          )
+          print(f"::notice title=Uploaded coverage artifact metrics::{details}")
+          with Path(os.environ["GITHUB_STEP_SUMMARY"]).open("a", encoding="utf-8") as summary:
+              summary.write("\n## Uploaded coverage artifact metrics\n\n")
+              summary.write(f"- Line coverage: **{line_coverage}**\n")
+              summary.write(f"- Branch coverage: **{branch_coverage}**\n")
+              summary.write(f"- `coverage.xml` SHA-256: `{xml_digest}`\n")
+              summary.write(f"- Artifact digest: `{artifact_digest or 'unavailable'}`\n")
+              if artifact_url:
+                  summary.write(f"- Uploaded artifact: {artifact_url}\n")
+          PY
