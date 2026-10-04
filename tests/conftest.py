@@ -188,15 +188,36 @@ def alembic_config() -> Config:
     return cfg
 
 
+async def _reset_kill_switch_state() -> None:
+    """Reset KILL_SWITCH state_key to inactive between test modules/cases."""
+    import asyncpg
+
+    dsn = os.environ["DATABASE_URL"].replace("postgresql+asyncpg://", "postgresql://")
+    conn = await asyncpg.connect(dsn)
+    try:
+        await conn.execute(
+            "UPDATE system_states SET is_active = FALSE WHERE state_key = 'KILL_SWITCH'"
+        )
+    finally:
+        await conn.close()
+
+
 @pytest.fixture
 def migrated_db(alembic_config: Config) -> None:
     """Ensure database schema is migrated to head and KILL_SWITCH is inactive."""
-    import psycopg
+    import asyncio
+    import concurrent.futures
 
     command.upgrade(alembic_config, "head")
-    sync_url = os.environ["DATABASE_URL"].replace("postgresql+asyncpg://", "postgresql://")
-    with psycopg.connect(sync_url, autocommit=True) as conn:
-        conn.execute("UPDATE system_states SET is_active = FALSE WHERE state_key = 'KILL_SWITCH'")
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        loop = None
+    if loop is not None and loop.is_running():
+        with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
+            executor.submit(asyncio.run, _reset_kill_switch_state()).result()
+    else:
+        asyncio.run(_reset_kill_switch_state())
 
 
 @pytest.fixture
