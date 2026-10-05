@@ -2,15 +2,19 @@
 
 **Prepared:** 2026-10-05
 **Contract authority:** `MVP0_Implementation_Contract_v1.2_FINAL.md`
-**Auditor disposition:** `F3: REQUIRES CHANGES` pending review of this evidence; this document does not claim acceptance.
-**F4:** **BLOCKED** until written authorization states exactly `F3 ACCEPTED — F4 AUTHORIZED`.
+**Status:** `ACCEPTED`
+**Auditor Decision:** `F3 ACCEPTED — F4 AUTHORIZED`
+**Decision Date:** `2026-10-05`
+**Baseline Commit:** `9cf204d88fbcc1af0428331f866348a013f6aec0`
+**F4 implementation:** Authorized by the decision above, but not started; it remains pending the formal F4 execution document from the consultant.
+**F5/F6:** **NOT AUTHORIZED**.
 **Validated Commit 1:** `ea8041fb65d645979a60ca18577c2b4ea71fcbd8` — `test(f3): add missing E2E contract coverage`
 **Validated Commit 2:** `c2fff0221aeb25b0af4bc5e1b53212b14fde49a8` — `test(f3): add F3 chaos recovery and isolation coverage`
 **Validated Commit 3:** `9cf204d88fbcc1af0428331f866348a013f6aec0` — `test(f3): add explicit rollback metric and replay audit tests`
 **Source-test CI run (before this evidence refresh):** [37272810591](https://github.com/amiralibr/crypto-management-portfolio/actions/runs/37272810591)
 **CI job:** [111643231479 — Lint, Typecheck, Migrate, and Test (Python 3.12)](https://github.com/amiralibr/crypto-management-portfolio/actions/runs/37272810591/job/111643231479)
 **Final package commit/CI run:** declared in the accompanying `F3_REMEDIATION_MANIFEST.md`.
-**Evidence commit SHA:** see `F3_REMEDIATION_MANIFEST.md` included with this evidence package.
+**Evidence documentation commit SHA:** reported after the administrative update is committed.
 
 ## 1. Scope and safety boundary
 
@@ -70,7 +74,7 @@ The five previously un-evidenced §21.5 behaviors and seven previously un-eviden
 
 ## 4. Contract §21.5 — all 16 E2E/integration behaviors
 
-Every row records the contract test ID, PASS/FAIL, actual CI run/step, expected outcome, observed outcome, and a genuine pytest result line from CI Step 12. `PASS` means the described assertion passed; it is not an Auditor acceptance decision.
+Every row records the contract test ID, PASS/FAIL, actual CI run/step, expected outcome, observed outcome, and a genuine pytest result line from CI Step 12. `PASS` means the described assertion passed; the final Auditor acceptance decision is recorded in §8.
 
 | Contract test ID | Result | CI run / step | Expected outcome | Observed outcome | Genuine CI log excerpt |
 |---|---|---|---|---|---|
@@ -113,7 +117,7 @@ Every row records the Contract ID, PASS/FAIL, actual CI run/step, expected outco
 | `test_paper_network_isolation_under_chaos` | **PASS** | [37229765669](https://github.com/amiralibr/crypto-management-portfolio/actions/runs/37229765669) / Step 12 | A simulated live-style endpoint/fake credential request is failure-injected without external egress while `LIVE_TRADING=false`. | `.invalid` request was observed only by MockTransport, injected `ConnectError` was asserted, non-loopback socket attempts stayed at zero, and Paper mode/order assertions passed. No real endpoint or credential was used. | `tests/chaos/test_f3_chaos.py::test_paper_network_isolation_under_chaos PASSED [ 99%]` |
 | `test_no_live_order_is_submitted_in_any_failure_scenario` | **PASS** | [37229765669](https://github.com/amiralibr/crypto-management-portfolio/actions/runs/37229765669) / Step 12 | Failure scenarios remain restricted to Fake/Paper adapters and create no live order. | `LIVE_TRADING=false`, `PAPER_TRADING=true`, allowed adapter set, injected Paper failure, and empty Paper order registry were asserted. | `tests/chaos/test_f3_chaos.py::test_no_live_order_is_submitted_in_any_failure_scenario PASSED [100%]` |
 
-**§21.6 result: 13/13 scenarios PASS in CI.** No F4 execution or acceptance is implied. The Kill Switch partial-fill limitation is recorded exactly as observed above.
+**§21.6 result: 13/13 scenarios PASS in CI.** No F4 execution is implied by these tests. F3 acceptance is recorded in §8. The Kill Switch partial-fill limitation is recorded exactly as observed above.
 
 ## 6. Commit structure and acceptance boundary
 
@@ -123,9 +127,11 @@ Every row records the Contract ID, PASS/FAIL, actual CI run/step, expected outco
 | 2 | `c2fff0221aeb25b0af4bc5e1b53212b14fde49a8` — `test(f3): add F3 chaos recovery and isolation coverage` | Seven previously un-evidenced §21.6 scenarios; complete 13-scenario file. |
 | 3 | `0862e345cba37fdc2a36c4ba6cf704f6cea98875` — `docs(f3): add completion evidence v1.1` | Initial Evidence v1.1 and byte-identical implementation mirror. |
 | 4 | `9cf204d88fbcc1af0428331f866348a013f6aec0` — `test(f3): add explicit rollback metric and replay audit tests` | Three additional, directly selectable integration tests. |
-| 5 | `docs(f3): update v1.1 evidence for named regressions` | This evidence supplement and byte-identical mirror; full evidence commit SHA is recorded in the package manifest. |
+| 5 | `d717c4fbbc411833a87dc3e88765d17a4838fb84` — `docs(f3): update v1.1 evidence for named regressions` | Evidence supplement and byte-identical mirror. |
+| 6 | `3af59a4bcb61eeea4cfb8dc33c43e95ac4ef84c1` — `docs(f3): align evidence with final package CI` | Audit-package evidence refresh. |
+| 7 | `docs(f3): record F3 acceptance and F4 authorization` | This administrative disposition update and byte-identical mirror only; no code or test changes. |
 
-`PASS` in the tables is test evidence only. It does not replace the Auditor's written decision. No F4 work is authorized or performed; F4 remains blocked pending the exact required authorization.
+`PASS` in the tables records test outcomes; the Auditor's written F3 acceptance is recorded in §8. F4 is authorized by that decision, but implementation has not started and must wait for the formal F4 execution document from the consultant. F5 and F6 remain unauthorized.
 
 ## 7. Audit package supplement — 2026-10-05
 
@@ -159,4 +165,36 @@ CI Step 14 passed the configured `--fail-under=90` per-module coverage gates, in
 
 ### Implementer declaration
 
-I confirm that the committed 13-scenario file remains `tests/chaos/test_f3_chaos.py`, that all 13 §21.6 rows remain separately mapped and passing, and that the three directly selectable integration tests above were added in code commit `9cf204d88fbcc1af0428331f866348a013f6aec0`. The Signal approval route remains `POST /api/v1/signals/{signal_id}/approve`; Decision API remains read-only. Database-restart scenarios use real PostgreSQL service restarts and check committed state after reconnect; the Redis restart scenario checks the authoritative Kill Switch state in PostgreSQL after reconnect. No Live Trading environment, real adapter, real credential, exchange connectivity, or F4-or-higher feature was introduced. This declaration and the test PASS results do not constitute Auditor acceptance; F4 remains blocked.
+I confirm that the committed 13-scenario file remains `tests/chaos/test_f3_chaos.py`, that all 13 §21.6 rows remain separately mapped and passing, and that the three directly selectable integration tests above were added in code commit `9cf204d88fbcc1af0428331f866348a013f6aec0`. The Signal approval route remains `POST /api/v1/signals/{signal_id}/approve`; Decision API remains read-only. Database-restart scenarios use real PostgreSQL service restarts and check committed state after reconnect; the Redis restart scenario checks the authoritative Kill Switch state in PostgreSQL after reconnect. No Live Trading environment, real adapter, real credential, exchange connectivity, or F4-or-higher feature was introduced. F3 acceptance is recorded in §8; F4 implementation remains unstarted pending the formal F4 execution document, and F5/F6 remain unauthorized.
+
+## 8. Final Auditor decision and phase handoff
+
+**Status:** `ACCEPTED`
+**Auditor Decision:** `F3 ACCEPTED — F4 AUTHORIZED`
+**Decision Date:** `2026-10-05`
+**Baseline Commit:** `9cf204d88fbcc1af0428331f866348a013f6aec0`
+**Accepted baseline tag:** `f3-accepted` → `9cf204d88fbcc1af0428331f866348a013f6aec0`
+
+### Decision basis
+
+- Contract §21.5: **16/16 E2E tests PASS**.
+- Contract §21.6: **13/13 Chaos scenarios PASS**.
+- Original CI Run [37229765669](https://github.com/amiralibr/crypto-management-portfolio/actions/runs/37229765669): **PASS**.
+- Corrective CI Run [37272810591](https://github.com/amiralibr/crypto-management-portfolio/actions/runs/37272810591): **PASS**.
+- Security Scan [37229765673](https://github.com/amiralibr/crypto-management-portfolio/actions/runs/37229765673): **PASS**.
+- Docker Build / Compose Validation [37229765664](https://github.com/amiralibr/crypto-management-portfolio/actions/runs/37229765664): **PASS**.
+- Line coverage: **95.27%**; branch coverage: **84.33%**.
+- The Auditor's final basis records critical modules `state_machine` and `signal_lifecycle` above **90%**.
+- No F4/F5/F6 scope creep was identified.
+
+**Administrative status updated after final auditor decision.**
+**No production code changed as part of this status update.**
+
+### Authorization boundary and carried limitations
+
+F4 is authorized by the decision above, but implementation **must not start** until the formal F4 execution document is received from the consultant. F5 and F6 remain unauthorized. `LIVE_TRADING=false` remains required. Live Trading, Direct Mode, real exchange adapters, real API keys, and real credentials remain prohibited.
+
+The following limitations are explicitly transferred to later phase gates and are not represented as solved by F3:
+
+1. Worker-kill behavior in F3 is exercised with exception injection, not an operating-system `SIGKILL`; deeper failure-mode analysis is deferred to F5.
+2. During a partial fill, the F3 Kill Switch cancels the remaining order and stops Synthetic Stop monitoring. It does not implement complete position handling. The policy must be determined in the applicable formal F4/F5 execution planning; no such implementation is included here.
