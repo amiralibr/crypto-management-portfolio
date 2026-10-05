@@ -14,7 +14,7 @@
 **Source-test CI run (before this evidence refresh):** [37272810591](https://github.com/amiralibr/crypto-management-portfolio/actions/runs/37272810591)
 **CI job:** [111643231479 — Lint, Typecheck, Migrate, and Test (Python 3.12)](https://github.com/amiralibr/crypto-management-portfolio/actions/runs/37272810591/job/111643231479)
 **Final package commit/CI run:** declared in the accompanying `F3_REMEDIATION_MANIFEST.md`.
-**Evidence Documentation Commit SHA:** `adc550b39724cb5bee3bc90b42abdac3e1174b13` (initial/pre-amend SHA; final amended HEAD SHA is reported separately)
+**Evidence Documentation Commit SHA:** `bea3ea46323dbf9ab7cf8666efbd9cbfa5de9894` (initial/pre-amend SHA; final amended HEAD SHA is reported separately)
 
 ## 1. Scope and safety boundary
 
@@ -43,6 +43,14 @@ PostgreSQL and Redis restart scenarios use the real GitHub Actions service conta
 | Step 14 — Full pytest suite and coverage gates | **PASS** | Full suite, global `--cov-fail-under=80`, and configured critical-module `--fail-under=90` gates succeeded. |
 | Step 15 — Upload coverage report | **PASS** | `coverage-report` artifact `11312952922` uploaded and is not expired. |
 | Step 16 — Publish uploaded coverage metrics | **PASS** | Post-upload CI step reported the coverage XML values and both content/archive digests. |
+
+Coverage source of truth:
+
+CI Run 37229765669 coverage artifact.
+
+Line coverage: 95.22% (4,003/4,204).
+
+Branch coverage: 84.07% (649/772).
 
 The actual uploaded `coverage-report` artifact is [available here](https://github.com/amiralibr/crypto-management-portfolio/actions/runs/37229765669/artifacts/11312952922). GitHub artifact metadata: ID `11312952922`, name `coverage-report`, size `11,445` bytes, digest `sha256:9068c60c2e463214bbad5e2dfd4f112a98079aa981608a6c9b0a3c4f70b39986`, not expired. The post-upload CI step parsed the exact `coverage.xml` just uploaded and reported:
 
@@ -144,10 +152,10 @@ This supplement records the additional named regression tests and the passing so
 | CI run | [37272810591](https://github.com/amiralibr/crypto-management-portfolio/actions/runs/37272810591) — **PASS**, validates the code commit above unchanged; this source-test run's head SHA is the preceding evidence commit, not the final refreshed package commit |
 | CI job | [111643231479 — Lint, Typecheck, Migrate, and Test (Python 3.12)](https://github.com/amiralibr/crypto-management-portfolio/actions/runs/37272810591/job/111643231479) — **PASS** |
 | Test/coverage steps | Step 12 mandatory F2/F3 suites **PASS**; Step 14 full pytest with coverage gates **PASS**; Steps 15–16 coverage upload/metrics **PASS** |
-| Coverage artifact | [`coverage-report`, ID 11329675678](https://github.com/amiralibr/crypto-management-portfolio/actions/runs/37272810591/artifacts/11329675678), 11,425 bytes, not expired (expires 2027-01-03) |
-| Current CI-reported overall coverage | **95.27% line (4,005 / 4,204)**; **84.33% branch (651 / 772)** |
-| `coverage.xml` SHA-256 | `080827249b7c9bd4ea646ed527b5116af3945e76b51fba797c90aa27c92afb5a` |
-| Artifact digest | `sha256:ae4b92f80aac7f40788a82707807874e210bce5ed9680f8b6a1f7a879a167bb5` |
+| Coverage source of truth | [CI Run 37229765669 artifact `coverage-report`, ID 11312952922](https://github.com/amiralibr/crypto-management-portfolio/actions/runs/37229765669/artifacts/11312952922) |
+| Accepted line coverage | **95.22% (4,003 / 4,204)** |
+| Accepted branch coverage | **84.07% (649 / 772)** |
+| `coverage.xml` SHA-256 | `dcf37ac39e188b942a8f2ead8f07be3c24050eebd71b3559439e439ce1040e05` |
 
 ### Additional directly selectable integration tests
 
@@ -161,7 +169,7 @@ All three tests below are in the committed `tests/integration/test_outbox_and_wo
 
 ### Per-module and state-machine coverage availability
 
-CI Step 14 passed the configured `--fail-under=90` per-module coverage gates, including `app/services/state_machine.py`; the state-machine module therefore passed its 90% minimum gate. The precise per-file percentages are contained in the linked `coverage.xml` artifact. The sandbox could not retrieve the artifact payload from GitHub's signed blob URL (the download returned `EOF`), so no per-module or state-machine numeric percentage is guessed or restated here. The Auditor can inspect those exact values directly in artifact `11329675678`.
+CI Step 14 passed the configured `--fail-under=90` per-module coverage gates, including `app/services/state_machine.py`; the state-machine module therefore passed its 90% minimum gate. The precise per-file percentages are contained in the selected source-of-truth `coverage.xml` artifact. The sandbox could not retrieve the artifact payload from GitHub's signed blob URL (the download returned `EOF`), so no per-module or state-machine numeric percentage is guessed or restated here. The Auditor can inspect those exact values directly in Run `37229765669`, artifact `11312952922`.
 
 ### Implementer declaration
 
@@ -183,7 +191,7 @@ I confirm that the committed 13-scenario file remains `tests/chaos/test_f3_chaos
 - Corrective CI Run [37272810591](https://github.com/amiralibr/crypto-management-portfolio/actions/runs/37272810591): **PASS**.
 - Security Scan [37229765673](https://github.com/amiralibr/crypto-management-portfolio/actions/runs/37229765673): **PASS**.
 - Docker Build / Compose Validation [37229765664](https://github.com/amiralibr/crypto-management-portfolio/actions/runs/37229765664): **PASS**.
-- Line coverage: **95.27%**; branch coverage: **84.33%**.
+- Line coverage: **95.22%**; branch coverage: **84.07%**.
 - The Auditor's final basis records critical modules `state_machine` and `signal_lifecycle` above **90%**.
 - No F4/F5/F6 scope creep was identified.
 
