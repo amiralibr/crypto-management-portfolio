@@ -120,3 +120,37 @@ Every row records the Contract ID, PASS/FAIL, actual CI run/step, expected outco
 | Commit 3 | `docs(f3): add completion evidence v1.1` | This evidence, mirrored byte-for-byte at `docs/implementation/MVP0_F3_Completion_Evidence_v1.1.md`. |
 
 `PASS` in the tables is test evidence only. It does not replace the Auditor's written decision. No F4 work is authorized or performed; F4 remains blocked pending the exact required authorization.
+
+## 7. Audit package supplement — 2026-10-05
+
+This supplement records the additional named regression tests and the exact CI validation of their source commit. It supplements, and does not replace or renumber, the §21.5 16/16 and §21.6 13/13 contract mappings above.
+
+| Item | Verified value |
+|---|---|
+| Code commit containing the additional integration tests | `9cf204d88fbcc1af0428331f866348a013f6aec0` |
+| Branch | `arena/01a0fca1-crypto-management-portfolio` |
+| CI run | [37272395795](https://github.com/amiralibr/crypto-management-portfolio/actions/runs/37272395795) — **PASS**, head SHA matches the code commit above |
+| CI job | [111641979112 — Lint, Typecheck, Migrate, and Test (Python 3.12)](https://github.com/amiralibr/crypto-management-portfolio/actions/runs/37272395795/job/111641979112) — **PASS** |
+| Test/coverage steps | Step 12 mandatory F2/F3 suites **PASS**; Step 14 full pytest with coverage gates **PASS**; Steps 15–16 coverage upload/metrics **PASS** |
+| Coverage artifact | [`coverage-report`, ID 11328589437](https://github.com/amiralibr/crypto-management-portfolio/actions/runs/37272395795/artifacts/11328589437), 11,426 bytes, not expired (expires 2027-01-03) |
+| Current CI-reported overall coverage | **95.27% line (4,005 / 4,204)**; **84.33% branch (651 / 772)** |
+| `coverage.xml` SHA-256 | `f2c4cf28524b613856a60e007adf4024368fe91dd96774da84cacf812d7359c9` |
+| Artifact digest | `sha256:262c4d913ed8bf0b9adc3118f74fac6f360bde26aa8dea8390bddd80a4c37206` |
+
+### Additional directly selectable integration tests
+
+All three tests below are in the committed `tests/integration/test_outbox_and_workers.py`. They are additional F3 regression checks and do not replace a §21.5 or §21.6 scenario. The final full-pytest coverage step passed on Run `37272395795`; the test IDs were collected by the full suite. No approval-timeout recovery test was substituted for any Chaos contract scenario.
+
+| Test ID | Expected outcome | Observed/asserted outcome | CI result |
+|---|---|---|---|
+| `test_signal_approval_rolls_back_when_outbox_insert_fails` | A failure inserting `ORDER_CREATED` during `POST /api/v1/signals/{signal_id}/approve` rolls back approval, Order, audit, Outbox, and idempotency writes. | Injected insert failure is observed; Signal remains `PENDING_APPROVAL`; Order, approval/Order audit and Outbox rows, and idempotency state are absent. | **PASS**, Run `37272395795`, Step 14 full pytest |
+| `test_dead_letter_event_increments_metric` | Exhausting retries for the target Outbox event creates an OPEN Dead-Letter record and increments the labeled Dead-Letter counter exactly once. | Test asserts retry count `5`, resolution `OPEN`, and `counter_after == counter_before + 1`. | **PASS**, Run `37272395795`, Step 14 full pytest |
+| `test_dead_letter_replay_creates_admin_audit_record` | An Admin replay creates a pending replay event and a schema-correct audit row. | Test asserts `action=DEAD_LETTER_EVENT_REPLAYED`, `actor_role=ADMIN`, and `target_id == dead_letter_event.id`. | **PASS**, Run `37272395795`, Step 14 full pytest |
+
+### Per-module and state-machine coverage availability
+
+CI Step 14 passed the configured `--fail-under=90` per-module coverage gates, including `app/services/state_machine.py`; the state-machine module therefore passed its 90% minimum gate. The precise per-file percentages are contained in the linked `coverage.xml` artifact. The sandbox could not retrieve the artifact payload from GitHub's signed blob URL (the download returned `EOF`), so no per-module or state-machine numeric percentage is guessed or restated here. The Auditor can inspect those exact values directly in artifact `11328589437`.
+
+### Implementer declaration
+
+I confirm that the committed 13-scenario file remains `tests/chaos/test_f3_chaos.py`, that all 13 §21.6 rows remain separately mapped and passing, and that the three directly selectable integration tests above were added in code commit `9cf204d88fbcc1af0428331f866348a013f6aec0`. The Signal approval route remains `POST /api/v1/signals/{signal_id}/approve`; Decision API remains read-only. Database-restart scenarios use real PostgreSQL service restarts and check committed state after reconnect; the Redis restart scenario checks the authoritative Kill Switch state in PostgreSQL after reconnect. No Live Trading environment, real adapter, real credential, exchange connectivity, or F4-or-higher feature was introduced. This declaration and the test PASS results do not constitute Auditor acceptance; F4 remains blocked.
