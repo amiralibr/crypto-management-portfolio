@@ -3,10 +3,12 @@
 import uuid
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
+from typing import Any
 
 import pytest
 from httpx import AsyncClient
-from sqlalchemy import select
+from sqlalchemy import func, select
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.enums import (
     ApiRole,
@@ -14,12 +16,16 @@ from app.core.enums import (
     DeadLetterResolutionStatus,
     OutboxEventType,
     OutboxStatus,
+    SignalApprovalStatus,
 )
 from app.core.errors import ForbiddenError
 from app.core.metrics import OUTBOX_DEAD_LETTER_EVENTS_TOTAL
 from app.db.models.audit_log import AuditLog
 from app.db.models.dead_letter_event import DeadLetterEvent
+from app.db.models.order import Order
 from app.db.models.outbox_event import OutboxEvent
+from app.db.models.signal import Signal
+from app.db.models.system_state import SystemState
 from app.db.session import dispose_db, get_session_factory, init_db
 from app.integrations.exchange.base import ExchangeAdapter, ExchangeAdapterRegistry
 from app.integrations.exchange.errors import ExchangeError
@@ -29,6 +35,8 @@ from app.integrations.notifications.telegram import PaperTelegramNotificationAda
 from app.main import create_app, lifespan
 from app.services.outbox import OutboxService
 from app.services.reconciliation import ReconciliationService
+from app.services.signal_engine import SignalEngine
+from app.services.signal_lifecycle import _build_idempotency_state_key
 from app.workers.approval_timeout import (
     WORKER_NAME as APPROVAL_TIMEOUT_WORKER_NAME,
 )
@@ -49,6 +57,7 @@ from app.workers.synthetic_stop import (
     run_synthetic_stop_step,
 )
 from app.workers.watchdog import check_system_watchdog
+from tests.unit.test_trend_following_rule import make_trend_candles
 
 
 @pytest.mark.asyncio
@@ -299,6 +308,256 @@ async def test_dead_letter_metric_is_incremented(migrated_db: None) -> None:
 
     assert counter._value.get() == counter_before + 1
     await dispose_db()
+
+
+@pytest.mark.asyncio
+async def test_signal_approval_rolls_back_when_outbox_insert_fails(
+    migrated_db: None,
+    async_client: AsyncClient,
+    operational_headers: dict[str, str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """API approval rolls back all writes if ORDER_CREATED Outbox insertion fails."""
+    init_db()
+    factory = get_session_factory()
+    candles_4h, candles_1h = make_trend_candles(symbol="BTC/USDT")
+    async with factory() as session:
+        signal = await SignalEngine().generate_trend_following_signal(
+            session,
+            symbol="BTC/USDT",
+            candles_4h=candles_4h,
+            candles_1h=candles_1h,
+            data_quality_score=Decimal("0.96"),
+            confidence_score=Decimal("0.84"),
+            now=datetime.now(UTC),
+        )
+        assert signal is not None
+        await session.commit()
+        signal_id = signal.id
+    await dispose_db()
+
+    idempotency_key = f"outbox-failure-{uuid.uuid4()}"
+    failed_order_ids: list[uuid.UUID] = []
+    original_enqueue = OutboxService.enqueue_event
+
+    async def fail_order_created_insert(
+        self: OutboxService,
+        session: AsyncSession,
+        *,
+        event_type: str,
+        aggregate_type: str,
+        aggregate_id: uuid.UUID,
+        payload: dict[str, Any],
+        event_version: int = 1,
+        event_id: uuid.UUID | None = None,
+    ) -> OutboxEvent:
+        if event_type == OutboxEventType.ORDER_CREATED.value:
+            failed_order_ids.append(aggregate_id)
+            raise RuntimeError("injected ORDER_CREATED Outbox insert failure")
+        return await original_enqueue(
+            self,
+            session,
+            event_type=event_type,
+            aggregate_type=aggregate_type,
+            aggregate_id=aggregate_id,
+            payload=payload,
+            event_version=event_version,
+            event_id=event_id,
+        )
+
+    monkeypatch.setattr(OutboxService, "enqueue_event", fail_order_created_insert)
+    try:
+        response = await async_client.post(
+            f"/api/v1/signals/{signal_id}/approve",
+            headers={**operational_headers, "Idempotency-Key": idempotency_key},
+            json={"reason": "Verify rollback after Outbox insert failure"},
+        )
+    except RuntimeError as exc:
+        assert "injected ORDER_CREATED Outbox insert failure" in str(exc)
+    else:
+        assert response.status_code == 500
+        assert response.json()["code"] == "INTERNAL_ERROR"
+    assert len(failed_order_ids) == 1
+    failed_order_id = failed_order_ids[0]
+
+    async with factory() as session:
+        persisted_signal = await session.scalar(select(Signal).where(Signal.id == signal_id))
+        assert persisted_signal is not None
+        assert persisted_signal.approval_status == SignalApprovalStatus.PENDING_APPROVAL.value
+
+        order_count = await session.scalar(
+            select(func.count()).select_from(Order).where(Order.signal_id == signal_id)
+        )
+        approval_audit_count = await session.scalar(
+            select(func.count())
+            .select_from(AuditLog)
+            .where(
+                AuditLog.target_type == "SIGNAL",
+                AuditLog.target_id == signal_id,
+                AuditLog.action == OutboxEventType.SIGNAL_APPROVED.value,
+            )
+        )
+        approval_event_count = await session.scalar(
+            select(func.count())
+            .select_from(OutboxEvent)
+            .where(
+                OutboxEvent.aggregate_type == "SIGNAL",
+                OutboxEvent.aggregate_id == signal_id,
+                OutboxEvent.event_type == OutboxEventType.SIGNAL_APPROVED.value,
+            )
+        )
+        order_audit_count = await session.scalar(
+            select(func.count())
+            .select_from(AuditLog)
+            .where(
+                AuditLog.target_type == "ORDER",
+                AuditLog.target_id == failed_order_id,
+                AuditLog.action == OutboxEventType.ORDER_CREATED.value,
+            )
+        )
+        order_event_count = await session.scalar(
+            select(func.count())
+            .select_from(OutboxEvent)
+            .where(
+                OutboxEvent.aggregate_type == "ORDER",
+                OutboxEvent.aggregate_id == failed_order_id,
+                OutboxEvent.event_type == OutboxEventType.ORDER_CREATED.value,
+            )
+        )
+        idempotency_record = await session.scalar(
+            select(SystemState).where(
+                SystemState.state_key == _build_idempotency_state_key(idempotency_key)
+            )
+        )
+
+    assert order_count == 0
+    assert approval_audit_count == 0
+    assert approval_event_count == 0
+    assert order_audit_count == 0
+    assert order_event_count == 0
+    assert idempotency_record is None
+
+
+@pytest.mark.asyncio
+async def test_dead_letter_event_increments_metric(migrated_db: None) -> None:
+    """A target event increments the Dead-Letter metric exactly once at retry exhaustion."""
+    service = OutboxService()
+    factory = get_session_factory()
+    event_id: uuid.UUID | None = None
+    now = datetime.now(UTC)
+    counter = OUTBOX_DEAD_LETTER_EVENTS_TOTAL.labels(
+        failure_class=DeadLetterFailureClass.CONSUMER.value
+    )
+    counter_before = counter._value.get()
+
+    async def fail_target_event(event: OutboxEvent) -> None:
+        if event.id == event_id:
+            raise RuntimeError("Injected consumer failure for metric assertion")
+
+    async with factory() as session:
+        event = await service.enqueue_event(
+            session,
+            event_type=OutboxEventType.ORDER_CREATED.value,
+            aggregate_type="ORDER",
+            aggregate_id=uuid.uuid4(),
+            payload={"metric_assertion": "dead-letter-event-increments-metric"},
+        )
+        event_id = event.id
+        await session.commit()
+
+        for attempt in range(5):
+            await service.process_pending_events(
+                session,
+                handler=fail_target_event,
+                now=now + timedelta(minutes=10 * attempt),
+                batch_size=1000,
+                failure_class=DeadLetterFailureClass.CONSUMER,
+            )
+            await session.commit()
+
+        dead_letter = await session.scalar(
+            select(DeadLetterEvent).where(DeadLetterEvent.original_outbox_event_id == event_id)
+        )
+        assert dead_letter is not None
+        assert dead_letter.retry_count == 5
+        assert dead_letter.resolution_status == DeadLetterResolutionStatus.OPEN.value
+
+    assert counter._value.get() == counter_before + 1
+    await dispose_db()
+
+
+@pytest.mark.asyncio
+async def test_dead_letter_replay_creates_admin_audit_record(
+    migrated_db: None,
+    async_client: AsyncClient,
+    admin_headers: dict[str, str],
+) -> None:
+    """Admin replay is persisted with the schema-correct Dead-Letter audit tuple."""
+    init_db()
+    factory = get_session_factory()
+    service = OutboxService()
+    event_id: uuid.UUID | None = None
+    now = datetime.now(UTC)
+
+    async def fail_target_event(event: OutboxEvent) -> None:
+        if event.id == event_id:
+            raise RuntimeError("Injected failure to create a Dead-Letter record")
+
+    async with factory() as session:
+        event = await service.enqueue_event(
+            session,
+            event_type=OutboxEventType.ORDER_CREATED.value,
+            aggregate_type="ORDER",
+            aggregate_id=uuid.uuid4(),
+            payload={"audit_assertion": "admin-replay"},
+        )
+        event_id = event.id
+        await session.commit()
+
+        for attempt in range(5):
+            await service.process_pending_events(
+                session,
+                handler=fail_target_event,
+                now=now + timedelta(minutes=5 * attempt),
+                batch_size=1000,
+                failure_class=DeadLetterFailureClass.CONSUMER,
+            )
+            await session.commit()
+
+        dead_letter = await session.scalar(
+            select(DeadLetterEvent).where(DeadLetterEvent.original_outbox_event_id == event_id)
+        )
+        assert dead_letter is not None
+        assert dead_letter.resolution_status == DeadLetterResolutionStatus.OPEN.value
+        dead_letter_id = dead_letter.id
+    await dispose_db()
+
+    response = await async_client.post(
+        f"/api/v1/system/dead-letters/{dead_letter_id}/replay",
+        headers=admin_headers,
+        json={"resolution_note": "Admin replay after consumer recovery"},
+    )
+    assert response.status_code == 200
+    response_body = response.json()
+    assert response_body["dead_letter_id"] == str(dead_letter_id)
+    assert response_body["resolution_status"] == DeadLetterResolutionStatus.REPLAYED.value
+    assert response_body["replayed_outbox_status"] == OutboxStatus.PENDING.value
+
+    factory = get_session_factory()
+    async with factory() as session:
+        replay_audit = await session.scalar(
+            select(AuditLog).where(
+                AuditLog.action == "DEAD_LETTER_EVENT_REPLAYED",
+                AuditLog.target_type == "DEAD_LETTER_EVENT",
+                AuditLog.target_id == dead_letter_id,
+            )
+        )
+    assert replay_audit is not None
+    assert replay_audit.action == "DEAD_LETTER_EVENT_REPLAYED"
+    assert replay_audit.actor_role == ApiRole.ADMIN.value
+    assert replay_audit.target_id == dead_letter_id
+    assert replay_audit.detail_json is not None
+    assert replay_audit.detail_json["replayed_outbox_event_id"]
 
 
 @pytest.mark.asyncio
