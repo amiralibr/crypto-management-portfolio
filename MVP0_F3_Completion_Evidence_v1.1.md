@@ -1,13 +1,16 @@
 # MVP-0 F3 Completion Evidence v1.1
 
-**Prepared:** 2026-10-04
+**Prepared:** 2026-10-05
 **Contract authority:** `MVP0_Implementation_Contract_v1.2_FINAL.md`
 **Auditor disposition:** `F3: REQUIRES CHANGES` pending review of this evidence; this document does not claim acceptance.
 **F4:** **BLOCKED** until written authorization states exactly `F3 ACCEPTED — F4 AUTHORIZED`.
 **Validated Commit 1:** `ea8041fb65d645979a60ca18577c2b4ea71fcbd8` — `test(f3): add missing E2E contract coverage`
 **Validated Commit 2:** `c2fff0221aeb25b0af4bc5e1b53212b14fde49a8` — `test(f3): add F3 chaos recovery and isolation coverage`
-**Final F3 CI run:** [37229765669](https://github.com/amiralibr/crypto-management-portfolio/actions/runs/37229765669)
-**CI job:** [111516792419 — Lint, Typecheck, Migrate, and Test (Python 3.12)](https://github.com/amiralibr/crypto-management-portfolio/actions/runs/37229765669/job/111516792419)
+**Validated Commit 3:** `9cf204d88fbcc1af0428331f866348a013f6aec0` — `test(f3): add explicit rollback metric and replay audit tests`
+**Source-test CI run (before this evidence refresh):** [37272810591](https://github.com/amiralibr/crypto-management-portfolio/actions/runs/37272810591)
+**CI job:** [111643231479 — Lint, Typecheck, Migrate, and Test (Python 3.12)](https://github.com/amiralibr/crypto-management-portfolio/actions/runs/37272810591/job/111643231479)
+**Final package commit/CI run:** declared in the accompanying `F3_REMEDIATION_MANIFEST.md`.
+**Evidence commit SHA:** see `F3_REMEDIATION_MANIFEST.md` included with this evidence package.
 
 ## 1. Scope and safety boundary
 
@@ -21,7 +24,8 @@ PostgreSQL and Redis restart scenarios use the real GitHub Actions service conta
 
 | Workflow | Run / job | Result | Evidence |
 |---|---|---|---|
-| CI — Python 3.12 | [Run 37229765669](https://github.com/amiralibr/crypto-management-portfolio/actions/runs/37229765669) / [Job 111516792419](https://github.com/amiralibr/crypto-management-portfolio/actions/runs/37229765669/job/111516792419) | **PASS** | Ruff, mypy, Alembic upgrade/downgrade/upgrade, mandatory F2/F3 suite, acceptance-log publication, full pytest with coverage gates, artifact upload, and post-upload metrics all passed. |
+| CI — Python 3.12 (original 16/13 contract evidence) | [Run 37229765669](https://github.com/amiralibr/crypto-management-portfolio/actions/runs/37229765669) / [Job 111516792419](https://github.com/amiralibr/crypto-management-portfolio/actions/runs/37229765669/job/111516792419) | **PASS** | Ruff, mypy, Alembic upgrade/downgrade/upgrade, mandatory F2/F3 suite, acceptance-log publication, full pytest with coverage gates, artifact upload, and post-upload metrics all passed. |
+| CI — Python 3.12 (source-test validation before evidence refresh) | [Run 37272810591](https://github.com/amiralibr/crypto-management-portfolio/actions/runs/37272810591) / [Job 111643231479](https://github.com/amiralibr/crypto-management-portfolio/actions/runs/37272810591/job/111643231479) | **PASS** | The run head contains code commit `9cf204d88fbcc1af0428331f866348a013f6aec0` unchanged; steps 7–16, including full pytest, all coverage gates, upload, and metrics publication, passed. Final package-head CI is identified in the accompanying manifest. |
 | Security & Paper Isolation Scan | [Run 37229765673](https://github.com/amiralibr/crypto-management-portfolio/actions/runs/37229765673) / Job `111516792263` | **PASS** | Security/Paper isolation suite and forbidden Live-trading/real-exchange-pattern check passed. |
 | Docker Build & Compose Validation | [Run 37229765664](https://github.com/amiralibr/crypto-management-portfolio/actions/runs/37229765664) / Job `111516792373` | **PASS** | API/Paper/independent Kill Switch images, single-worker/non-root checks, and Development/Paper Compose checks passed. |
 
@@ -113,43 +117,45 @@ Every row records the Contract ID, PASS/FAIL, actual CI run/step, expected outco
 
 ## 6. Commit structure and acceptance boundary
 
-| Commit | Message | Scope |
+| Sequence | Commit / message | Scope |
 |---|---|---|
-| Commit 1 | `test(f3): add missing E2E contract coverage` | Five previously un-evidenced §21.5 behaviors; test-scoped Outbox rollback injection, metric, and audit assertions. |
-| Commit 2 | `test(f3): add F3 chaos recovery and isolation coverage` | Seven previously un-evidenced §21.6 scenarios; complete 13-scenario file and CI execution/reporting. |
-| Commit 3 | `docs(f3): add completion evidence v1.1` | This evidence, mirrored byte-for-byte at `docs/implementation/MVP0_F3_Completion_Evidence_v1.1.md`. |
+| 1 | `ea8041fb65d645979a60ca18577c2b4ea71fcbd8` — `test(f3): add missing E2E contract coverage` | Five previously un-evidenced §21.5 behaviors and transaction rollback/metric/audit checks. |
+| 2 | `c2fff0221aeb25b0af4bc5e1b53212b14fde49a8` — `test(f3): add F3 chaos recovery and isolation coverage` | Seven previously un-evidenced §21.6 scenarios; complete 13-scenario file. |
+| 3 | `0862e345cba37fdc2a36c4ba6cf704f6cea98875` — `docs(f3): add completion evidence v1.1` | Initial Evidence v1.1 and byte-identical implementation mirror. |
+| 4 | `9cf204d88fbcc1af0428331f866348a013f6aec0` — `test(f3): add explicit rollback metric and replay audit tests` | Three additional, directly selectable integration tests. |
+| 5 | `docs(f3): update v1.1 evidence for named regressions` | This evidence supplement and byte-identical mirror; full evidence commit SHA is recorded in the package manifest. |
 
 `PASS` in the tables is test evidence only. It does not replace the Auditor's written decision. No F4 work is authorized or performed; F4 remains blocked pending the exact required authorization.
 
 ## 7. Audit package supplement — 2026-10-05
 
-This supplement records the additional named regression tests and the exact CI validation of their source commit. It supplements, and does not replace or renumber, the §21.5 16/16 and §21.6 13/13 contract mappings above.
+This supplement records the additional named regression tests and the passing source-test CI run. It supplements, and does not replace or renumber, the §21.5 16/16 and §21.6 13/13 contract mappings above. The final package commit and its exact CI run are declared in the accompanying `F3_REMEDIATION_MANIFEST.md`.
 
 | Item | Verified value |
 |---|---|
 | Code commit containing the additional integration tests | `9cf204d88fbcc1af0428331f866348a013f6aec0` |
 | Branch | `arena/01a0fca1-crypto-management-portfolio` |
-| CI run | [37272395795](https://github.com/amiralibr/crypto-management-portfolio/actions/runs/37272395795) — **PASS**, head SHA matches the code commit above |
-| CI job | [111641979112 — Lint, Typecheck, Migrate, and Test (Python 3.12)](https://github.com/amiralibr/crypto-management-portfolio/actions/runs/37272395795/job/111641979112) — **PASS** |
+| CI run | [37272810591](https://github.com/amiralibr/crypto-management-portfolio/actions/runs/37272810591) — **PASS**, validates the code commit above unchanged; this source-test run's head SHA is the preceding evidence commit, not the final refreshed package commit |
+| CI job | [111643231479 — Lint, Typecheck, Migrate, and Test (Python 3.12)](https://github.com/amiralibr/crypto-management-portfolio/actions/runs/37272810591/job/111643231479) — **PASS** |
 | Test/coverage steps | Step 12 mandatory F2/F3 suites **PASS**; Step 14 full pytest with coverage gates **PASS**; Steps 15–16 coverage upload/metrics **PASS** |
-| Coverage artifact | [`coverage-report`, ID 11328589437](https://github.com/amiralibr/crypto-management-portfolio/actions/runs/37272395795/artifacts/11328589437), 11,426 bytes, not expired (expires 2027-01-03) |
+| Coverage artifact | [`coverage-report`, ID 11329675678](https://github.com/amiralibr/crypto-management-portfolio/actions/runs/37272810591/artifacts/11329675678), 11,425 bytes, not expired (expires 2027-01-03) |
 | Current CI-reported overall coverage | **95.27% line (4,005 / 4,204)**; **84.33% branch (651 / 772)** |
-| `coverage.xml` SHA-256 | `f2c4cf28524b613856a60e007adf4024368fe91dd96774da84cacf812d7359c9` |
-| Artifact digest | `sha256:262c4d913ed8bf0b9adc3118f74fac6f360bde26aa8dea8390bddd80a4c37206` |
+| `coverage.xml` SHA-256 | `080827249b7c9bd4ea646ed527b5116af3945e76b51fba797c90aa27c92afb5a` |
+| Artifact digest | `sha256:ae4b92f80aac7f40788a82707807874e210bce5ed9680f8b6a1f7a879a167bb5` |
 
 ### Additional directly selectable integration tests
 
-All three tests below are in the committed `tests/integration/test_outbox_and_workers.py`. They are additional F3 regression checks and do not replace a §21.5 or §21.6 scenario. The final full-pytest coverage step passed on Run `37272395795`; the test IDs were collected by the full suite. No approval-timeout recovery test was substituted for any Chaos contract scenario.
+All three tests below are in the committed `tests/integration/test_outbox_and_workers.py`. They are additional F3 regression checks and do not replace a §21.5 or §21.6 scenario. The final full-pytest coverage step passed on Run `37272810591`; the test IDs were collected by the full suite. No approval-timeout recovery test was substituted for any Chaos contract scenario.
 
 | Test ID | Expected outcome | Observed/asserted outcome | CI result |
 |---|---|---|---|
-| `test_signal_approval_rolls_back_when_outbox_insert_fails` | A failure inserting `ORDER_CREATED` during `POST /api/v1/signals/{signal_id}/approve` rolls back approval, Order, audit, Outbox, and idempotency writes. | Injected insert failure is observed; Signal remains `PENDING_APPROVAL`; Order, approval/Order audit and Outbox rows, and idempotency state are absent. | **PASS**, Run `37272395795`, Step 14 full pytest |
-| `test_dead_letter_event_increments_metric` | Exhausting retries for the target Outbox event creates an OPEN Dead-Letter record and increments the labeled Dead-Letter counter exactly once. | Test asserts retry count `5`, resolution `OPEN`, and `counter_after == counter_before + 1`. | **PASS**, Run `37272395795`, Step 14 full pytest |
-| `test_dead_letter_replay_creates_admin_audit_record` | An Admin replay creates a pending replay event and a schema-correct audit row. | Test asserts `action=DEAD_LETTER_EVENT_REPLAYED`, `actor_role=ADMIN`, and `target_id == dead_letter_event.id`. | **PASS**, Run `37272395795`, Step 14 full pytest |
+| `test_signal_approval_rolls_back_when_outbox_insert_fails` | A failure inserting `ORDER_CREATED` during `POST /api/v1/signals/{signal_id}/approve` rolls back approval, Order, audit, Outbox, and idempotency writes. | Injected insert failure is observed; Signal remains `PENDING_APPROVAL`; Order, approval/Order audit and Outbox rows, and idempotency state are absent. | **PASS**, Run `37272810591`, Step 14 full pytest |
+| `test_dead_letter_event_increments_metric` | Exhausting retries for the target Outbox event creates an OPEN Dead-Letter record and increments the labeled Dead-Letter counter exactly once. | Test asserts retry count `5`, resolution `OPEN`, and `counter_after == counter_before + 1`. | **PASS**, Run `37272810591`, Step 14 full pytest |
+| `test_dead_letter_replay_creates_admin_audit_record` | An Admin replay creates a pending replay event and a schema-correct audit row. | Test asserts `action=DEAD_LETTER_EVENT_REPLAYED`, `actor_role=ADMIN`, and `target_id == dead_letter_event.id`. | **PASS**, Run `37272810591`, Step 14 full pytest |
 
 ### Per-module and state-machine coverage availability
 
-CI Step 14 passed the configured `--fail-under=90` per-module coverage gates, including `app/services/state_machine.py`; the state-machine module therefore passed its 90% minimum gate. The precise per-file percentages are contained in the linked `coverage.xml` artifact. The sandbox could not retrieve the artifact payload from GitHub's signed blob URL (the download returned `EOF`), so no per-module or state-machine numeric percentage is guessed or restated here. The Auditor can inspect those exact values directly in artifact `11328589437`.
+CI Step 14 passed the configured `--fail-under=90` per-module coverage gates, including `app/services/state_machine.py`; the state-machine module therefore passed its 90% minimum gate. The precise per-file percentages are contained in the linked `coverage.xml` artifact. The sandbox could not retrieve the artifact payload from GitHub's signed blob URL (the download returned `EOF`), so no per-module or state-machine numeric percentage is guessed or restated here. The Auditor can inspect those exact values directly in artifact `11329675678`.
 
 ### Implementer declaration
 
