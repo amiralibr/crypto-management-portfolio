@@ -6,7 +6,7 @@
 **Auditor Decision:** `F3 ACCEPTED — F4 AUTHORIZED`
 **Decision Date:** `2026-10-05`
 **Baseline Commit:** `9cf204d88fbcc1af0428331f866348a013f6aec0`
-**F4 implementation:** Authorized by the decision above, but not started; it remains pending the formal F4 execution document from the consultant.
+**F4 status:** **BLOCKED** pending Auditor confirmation of the administrative baseline proof outputs; implementation has not started and also requires the formal F4 execution document from the consultant.
 **F5/F6:** **NOT AUTHORIZED**.
 **Validated Commit 1:** `ea8041fb65d645979a60ca18577c2b4ea71fcbd8` — `test(f3): add missing E2E contract coverage`
 **Validated Commit 2:** `c2fff0221aeb25b0af4bc5e1b53212b14fde49a8` — `test(f3): add F3 chaos recovery and isolation coverage`
@@ -14,7 +14,7 @@
 **Source-test CI run (before this evidence refresh):** [37272810591](https://github.com/amiralibr/crypto-management-portfolio/actions/runs/37272810591)
 **CI job:** [111643231479 — Lint, Typecheck, Migrate, and Test (Python 3.12)](https://github.com/amiralibr/crypto-management-portfolio/actions/runs/37272810591/job/111643231479)
 **Final package commit/CI run:** declared in the accompanying `F3_REMEDIATION_MANIFEST.md`.
-**Evidence documentation commit SHA:** reported after the administrative update is committed.
+**Evidence Documentation Commit SHA:** `adc550b39724cb5bee3bc90b42abdac3e1174b13` (initial/pre-amend SHA; final amended HEAD SHA is reported separately)
 
 ## 1. Scope and safety boundary
 
@@ -192,7 +192,7 @@ I confirm that the committed 13-scenario file remains `tests/chaos/test_f3_chaos
 
 ### Authorization boundary and carried limitations
 
-F4 is authorized by the decision above, but implementation **must not start** until the formal F4 execution document is received from the consultant. F5 and F6 remain unauthorized. `LIVE_TRADING=false` remains required. Live Trading, Direct Mode, real exchange adapters, real API keys, and real credentials remain prohibited.
+The Auditor Decision authorizes F4 subject to administrative baseline proof, but F4 remains **BLOCKED** until the Auditor confirms the administrative outputs. Even after confirmation, F4 implementation **must not start** until the formal F4 execution document is received from the consultant. F5 and F6 remain unauthorized. `LIVE_TRADING=false` remains required. Live Trading, Direct Mode, real exchange adapters, real API keys, and real credentials remain prohibited.
 
 The following limitations are explicitly transferred to later phase gates and are not represented as solved by F3:
 
