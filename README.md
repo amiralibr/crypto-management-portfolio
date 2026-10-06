@@ -1,8 +1,9 @@
-# MVP-0 Crypto Risk Management System — Phase F1 (Approved) & Phase F2 (Data and Risk Core)
+# MVP-0 Crypto Risk Management System — Phase Status
 
-**F1 Baseline Status:** `APPROVED` (`release/f1-candidate` @ `bdff565d1b46222bd15340a0fe0ba3e76dd7411b`)  
-**Current Active Phase:** `F2 — Data and Risk Core` (`F2 READY FOR REVIEW`)  
-**Phase F3 Status:** `FROZEN / NOT STARTED`  
+- **F1/F2/F3:** `ACCEPTED — CLOSED`
+- **F4:** `AUTHORIZED — NOT STARTED — PENDING START CLEARANCE`
+- **F5/F6/F7:** `UNAUTHORIZED`
+
 **Trading Mode:** `PAPER ONLY` (`LIVE_TRADING=false`, `PAPER_TRADING=true` — immutable)  
 **Evidence Documents:**
 - [`MVP0_F1_Completion_Evidence_v1.0.md`](./MVP0_F1_Completion_Evidence_v1.0.md)
